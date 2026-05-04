@@ -86,15 +86,57 @@ keep p99 comfortably under 200 ms at the same load.
 | migration cost from class-validator         | n/a             | medium (familiar API) | larger (new DSL) |
 | ecosystem familiarity                       | high            | very high      | newer         |
 
+## Results — full-surface demo path (`pnpm bench:demo`)
+
+This bench drives the same `createBook` and `placeOrder` mutations against
+all three demo servers (`classvalidator-demo`, `zod-demo`, `arktype-demo`)
+which mirror the same full-feature surface: `@InputType` + `@ObjectType` +
+`@ArgsType` + enum + `PartialType` / `PickType` / `OmitType`. 16
+connections, 6 s per run, on small everyday-shape payloads.
+
+| case                              | server          |   rps  | mean(ms) | p99   |
+| --------------------------------- | --------------- | -----: | -------: | ----: |
+| createBook (single object)        | class-validator | 14,887 |  0.34 ms |  2 ms |
+| createBook                        | zod v4          | 13,846 |  0.44 ms |  5 ms |
+| createBook                        | **arktype**     | 15,997 |  0.24 ms |  2 ms |
+| placeOrder (5-item array + enum)  | class-validator | 13,640 |  0.52 ms |  3 ms |
+| placeOrder                        | zod v4          | 15,348 |  0.29 ms |  2 ms |
+| placeOrder                        | arktype         | 14,507 |  0.36 ms |  4 ms |
+| placeOrder (50-item array)        | class-validator | 12,175 |  1.08 ms |  2 ms |
+| placeOrder                        | zod v4          | 10,280 |  1.24 ms |  5 ms |
+| placeOrder                        | arktype         | 11,669 |  1.12 ms |  4 ms |
+
+The takeaway: on small everyday shapes (≤ 50 simple fields, no deep
+nesting, modest schema footprint) all three engines run within 15-20% of
+each other and the engine choice doesn't matter for throughput. The
+class-validator overhead only manifests when (a) the global metadata
+storage has accumulated mass (Aurora has 100s of `@InputType` classes) AND
+(b) requests carry deeply-nested inputs that drive `getTargetValidationMetadatas`
+through that mass per nested target. The cart-summary bench (above) loads
+those conditions explicitly with 80 filler classes + 200-item nested input,
+which is where the 4-5× rps gap appears.
+
 ## Run it
 
 ```bash
 pnpm install
-pnpm bench:micro                  # in-process validation cost (all 3 engines)
-PORT=3001 pnpm start:cv           # class-validator server
-PORT=3002 pnpm start:ak           # arktype server
-PORT=3003 pnpm start:zod          # zod v4 server
-BENCH_SECONDS=8 pnpm bench        # end-to-end HTTP comparison (all 3 engines)
+
+# Direct in-process validation cost (all 3 engines)
+pnpm bench:micro
+
+# Bench servers (cart-summary stress shape — bench surface)
+PORT=3001 pnpm start:cv           # class-validator
+PORT=3002 pnpm start:ak           # arktype
+PORT=3003 pnpm start:zod          # zod v4
+
+# Demo servers (full-surface @InputType/@ObjectType/@ArgsType/enum/PartialType, etc.)
+PORT=3009 pnpm start:demo:cv      # classvalidator-demo
+PORT=3010 pnpm start:demo         # arktype-demo
+PORT=3011 pnpm start:demo:zod     # zod-demo
+
+# End-to-end HTTP comparisons
+BENCH_SECONDS=8 pnpm bench        # cart-summary stress shape (3-way)
+BENCH_SECONDS=8 pnpm bench:demo   # demo path (3-way)
 ```
 
 ## Layout
@@ -132,18 +174,34 @@ src/
 │   ├── resolver.ts                      #   uses @ArkQuery/@ArkMutation/@ArkArgs
 │   └── main.ts                          #   `pnpm start:demo` boots on :3010
 ├── zod/
-│   ├── graphql-zod/                     # the Zod v4 ↔ GraphQL prototype lib
-│   │   ├── create-zod-input-type.ts     #   walks z.toJSONSchema → @Field calls
-│   │   ├── zod-validation.pipe.ts       #   pipe that runs schema.safeParse
-│   │   ├── zod-args.decorator.ts        #   @ZodArgs (sets design:paramtypes)
+│   ├── graphql-zod/                     # Zod v4 ↔ NestJS-GraphQL library (mirrors graphql-arktype)
+│   │   ├── core/                        #   shared schema → GQL helpers
+│   │   ├── zod-input-type.ts            #   createZodInputType
+│   │   ├── zod-object-type.ts           #   createZodObjectType
+│   │   ├── zod-args-type.ts             #   createZodArgsType
+│   │   ├── zod-enum.ts                  #   registerZodEnum
+│   │   ├── zod-type-helpers.ts          #   zodPartial / zodPick / zodOmit / zodRequired / zodIntersection
+│   │   ├── zod-args.decorator.ts        #   @ZodArgs
+│   │   ├── zod-query.decorator.ts       #   @ZodQuery / @ZodMutation
+│   │   ├── zod-validation.pipe.ts
 │   │   └── index.ts
-│   ├── dtos.ts                          # Zod schemas + createZodInputType wiring
+│   ├── dtos.ts                          # Zod schemas + bench wiring
 │   ├── filler-types.ts                  # 80 Zod-driven InputType classes
-│   ├── resolver.ts
+│   ├── resolver.ts                      # processCart mutation (bench surface)
 │   └── main.ts
+├── zod-demo/                            # mirrors arktype-demo surface using graphql-zod
+│   ├── schemas.ts
+│   ├── dtos.ts
+│   ├── resolver.ts
+│   └── main.ts                          # `pnpm start:demo:zod` boots on :3011
+├── classvalidator-demo/                 # mirror surface using @nestjs/graphql native helpers
+│   ├── dtos.ts                          #   @InputType/@ObjectType/@ArgsType + class-validator + PartialType/PickType/OmitType
+│   ├── resolver.ts
+│   └── main.ts                          # `pnpm start:demo:cv` boots on :3009
 └── bench/
     ├── micro.ts                         # in-process validate-only loop (3-way)
-    └── run.ts                           # autocannon end-to-end driver (3-way)
+    ├── run.ts                           # autocannon driver — cart-summary stress (3-way)
+    └── run-demo.ts                      # autocannon driver — full-surface demo path (3-way)
 ```
 
 ## graphql-arktype: the library prototype
@@ -204,14 +262,36 @@ PartialType / PickType / OmitType derived classes appearing in the schema,
 the enum surfaced via introspection, and the args bundle parsed at the
 GraphQL layer.
 
-## Notes on the Zod prototype
+## graphql-zod: the parallel library
 
-`src/zod/graphql-zod/` is the much-smaller proof-of-concept shape from the
-benchmark — input type only, no enum / object / partial helpers. The same
-expansion would apply if Zod becomes the chosen direction; the
-`createXxxInputType` core in `core/build-decorated-class.ts` is intentionally
-schema-engine-agnostic and a Zod variant could share it.
+`src/zod/graphql-zod/` mirrors `graphql-arktype` 1:1 — same module layout,
+same exports, same `core/json-schema-to-gql.ts` derivation, same auto
+nested-type resolution, same type-helper semantics. The only differences
+are the schema engine (`z.toJSONSchema(schema)` instead of
+`schema.toJsonSchema()`) and the validation primitive (`schema.safeParse`
+instead of `schema(value)` + `ArkErrors`):
 
-`nestjs-arktype` and `nestjs-zod` are both currently scoped to Swagger/REST
-DTOs; neither registers `@nestjs/graphql` metadata, which is the integration
-the local libraries provide.
+| `@nestjs/graphql`            | `graphql-zod`                                          |
+| ---------------------------- | ------------------------------------------------------ |
+| `@InputType()` + `@Field()`  | `createZodInputType(schema, { name, fields? })`        |
+| `@ObjectType()` + `@Field()` | `createZodObjectType(schema, { name, fields? })`       |
+| `@ArgsType()`                | `createZodArgsType(schema, { name?, fields? })`        |
+| `registerEnumType(...)`      | `registerZodEnum(schema, { name, valuesMap? })`        |
+| `PartialType` / `PickType` / `OmitType` / `IntersectionType` | `zodPartial` / `zodPick` / `zodOmit` / `zodRequired` / `zodIntersection` |
+| `@Args('input', {type})`     | `@ZodArgs('input', InputClass)`                        |
+| `@Query` / `@Mutation`       | `@ZodQuery(schema)` / `@ZodMutation(schema, { validate? })` |
+| `ValidationPipe`             | `ZodValidationPipe`                                    |
+
+`src/zod-demo/` exercises every helper end-to-end and mirrors
+`src/arktype-demo/` line-for-line so the cross-engine comparison is
+apples-to-apples.
+
+## Notes
+
+- `nestjs-arktype` and `nestjs-zod` are both currently scoped to Swagger/REST
+  DTOs; neither registers `@nestjs/graphql` metadata, which is the integration
+  the local libraries provide.
+- `src/classvalidator-demo/` uses NestJS's native `PartialType` / `PickType` /
+  `OmitType` (from `@nestjs/graphql`) and `class-validator` decorators on
+  hand-written `@InputType` / `@ObjectType` classes — the conventional,
+  pre-library shape against which both prototypes are measured.
