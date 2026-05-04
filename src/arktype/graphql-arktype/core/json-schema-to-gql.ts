@@ -15,25 +15,27 @@ export interface JsonSchemaProperty {
     enum?: readonly unknown[];
     anyOf?: readonly JsonSchemaProperty[];
     description?: string;
+    default?: unknown;
 }
 
 /**
  * The reference shapes a caller can pass via the `fields` override map.
  *
- * Five accepted forms (TypeScript-friendly + ergonomic):
+ * Six accepted forms (TypeScript-friendly + ergonomic):
  *
  * 1. A class: `tags: TagInput`
  * 2. An array of class: `tags: [TagInput]`
  * 3. A thunk: `tags: () => [TagInput]`
- * 4. An explicit shape: `tags: { type: () => [TagInput], nullable: false }`
+ * 4. An explicit shape: `tags: { type: () => [TagInput], nullable: false, name: 'tagList', defaultValue: [] }`
  * 5. Hide from the schema: `internalRowId: { hidden: true }`
+ * 6. (Optional via the explicit shape) override the GraphQL field name to differ from the property key.
  *
  * `unknown` is used (rather than `any`) to keep callers honest about what they're passing — the runtime narrowing
  * in `normalizeOverride` switches on shape regardless.
  */
 export type FieldRef =
     | ReturnTypeFunc
-    | { type: ReturnTypeFunc; nullable?: boolean }
+    | { type: ReturnTypeFunc; nullable?: boolean; name?: string; defaultValue?: unknown }
     | { hidden: true }
     | readonly ReturnTypeFuncValue[]
     | NewableFunction;
@@ -49,12 +51,27 @@ export interface ResolveOptions {
      * Whether `format: "date-time"` maps to GraphQLISODateTime instead of String.
      */
     isoDateTime?: boolean;
+    /**
+     * Generalised mapping from a JSON-schema `format` string to the GraphQL scalar/class it should resolve to.
+     * Checked AFTER `idFormats` and the `isoDateTime` shortcut so users can register custom scalars (e.g.
+     * `'email' -> () => GraphQLEmailAddress`, `'date' -> () => Date`) without losing the built-in conveniences.
+     */
+    formatToScalar?: ReadonlyMap<string, ReturnTypeFunc>;
 }
 
 export interface ResolvedField {
     type: ReturnTypeFunc;
     nullable: boolean;
     hidden?: boolean;
+    /**
+     * Override the GraphQL field name; defaults to the JS property key when undefined.
+     */
+    name?: string;
+    /**
+     * Forwarded to `@Field({ defaultValue })`. May be set explicitly via an override or pulled from the schema's
+     * JSON-schema `default`.
+     */
+    defaultValue?: unknown;
 }
 
 interface ResolveFieldArgs {
@@ -107,13 +124,17 @@ function normalizeOverride(override: FieldRef, nullable: boolean): ResolvedField
     if (isPlainObject(override) && 'hidden' in override && override.hidden === true) {
         return { hidden: true, nullable, type: () => String };
     }
-    // Object-shaped override with explicit { type, nullable }.
+    // Object-shaped override with explicit { type, nullable, name?, defaultValue? }.
     if (isPlainObject(override) && 'type' in override && isFunction(override.type)) {
         const explicitType: ReturnTypeFunc = override.type;
         const nullableOverride = 'nullable' in override ? override.nullable : undefined;
+        const nameOverride = 'name' in override && typeof override.name === 'string' ? override.name : undefined;
+        const defaultValueOverride = 'defaultValue' in override ? override.defaultValue : undefined;
         return {
             nullable: nullableOverride ?? nullable,
             type: explicitType,
+            ...(nameOverride !== undefined && { name: nameOverride }),
+            ...(defaultValueOverride !== undefined && { defaultValue: defaultValueOverride }),
         };
     }
     // Function override: distinguish a class from a thunk by whether the
@@ -211,6 +232,12 @@ function derive(
             }
             if (fmt === 'date-time' && options.isoDateTime) {
                 return { nullable, type: () => GraphQLISODateTime };
+            }
+            if (fmt) {
+                const customScalar = options.formatToScalar?.get(fmt);
+                if (customScalar !== undefined) {
+                    return { nullable, type: customScalar };
+                }
             }
             return { nullable, type: () => String };
         }

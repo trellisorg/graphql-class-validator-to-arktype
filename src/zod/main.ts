@@ -5,6 +5,7 @@ import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { GraphQLModule } from '@nestjs/graphql';
 import 'reflect-metadata';
+import { mountBenchStats } from '../shared/bench-stats';
 import { CartItemInput, CartSummaryInput, CartSummaryResult, SponsorInput, TagInput } from './dtos';
 import { FILLER_CLASSES } from './filler-types';
 import { ZodValidationPipe } from './graphql-zod';
@@ -42,6 +43,7 @@ async function bootstrap() {
     const express = (await import('express')).default;
     app.use(express.json({ limit: '10mb' }));
     app.useGlobalPipes(new ZodValidationPipe());
+    mountBenchStats(app);
     const port = Number(process.env.PORT ?? 3003);
     await app.listen(port);
     console.log(`[zod] listening on http://localhost:${port}/graphql`);

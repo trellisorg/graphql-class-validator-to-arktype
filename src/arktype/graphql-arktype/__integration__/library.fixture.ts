@@ -2,16 +2,23 @@ import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/dis
 import { ApolloDriver, type ApolloDriverConfig } from '@nestjs/apollo';
 import type { Type } from '@nestjs/common';
 import { Module } from '@nestjs/common';
-import { Args, GraphQLModule, Parent, ResolveField, Resolver } from '@nestjs/graphql';
+import { Args, ArgsType, GraphQLModule, Parent, ResolveField, Resolver } from '@nestjs/graphql';
 import { type } from 'arktype';
 import 'reflect-metadata';
 import {
     ArkArgs,
     ArkMutation,
     ArkQuery,
+    ArkSubscription,
     ArkValidationPipe,
+    arkOmit,
+    arkPick,
+    createArkConnectionType,
+    createArkCursorPaginatedArgsType,
     createArkInputType,
+    createArkInterfaceType,
     createArkObjectType,
+    createArkUnion,
     registerArkEnum,
 } from '../';
 
@@ -27,6 +34,10 @@ const TagSchema = type({
     name: 'string > 0 & string <= 64',
 });
 
+const IdentifiableSchema = type({
+    id: 'string.uuid.v4',
+});
+
 const AuthorSchema = type({
     id: 'string.uuid.v4',
     name: 'string > 0 & string <= 256',
@@ -39,6 +50,11 @@ const BookSchema = type({
     // `internalRowId` is intentionally hidden in the GraphQL schema but still
     // Validated by the ArkType pipe — exercises the new `hidden: true` knob.
     internalRowId: 'string > 0',
+});
+
+const ValidationErrorSchema = type({
+    code: 'string > 0',
+    message: 'string > 0',
 });
 
 const CreateAuthorInputSchema = type({
@@ -62,11 +78,37 @@ const Tag = createArkObjectType(TagSchema, {
     name: 'LibTag',
 });
 
-const Author = createArkObjectType(AuthorSchema, { name: 'LibAuthor' });
+// `Identifiable` exercises createArkInterfaceType. The resolveType is shape-driven so any object with an
+// `internalRowId` is treated as a Book; otherwise the `name` field disambiguates an Author from a generic node.
+const Identifiable = createArkInterfaceType(IdentifiableSchema, {
+    name: 'LibIdentifiable',
+    resolveType: (value) => {
+        if (typeof value !== 'object' || value === null) {
+            return undefined;
+        }
+        if ('internalRowId' in value || 'title' in value) {
+            return Book;
+        }
+        if ('name' in value) {
+            return Author;
+        }
+        return undefined;
+    },
+});
+
+const Author = createArkObjectType(AuthorSchema, {
+    name: 'LibAuthor',
+    implements: () => Identifiable,
+});
 
 const Book = createArkObjectType(BookSchema, {
     fields: { internalRowId: { hidden: true } },
+    implements: () => Identifiable,
     name: 'LibBook',
+});
+
+const ValidationError = createArkObjectType(ValidationErrorSchema, {
+    name: 'LibValidationError',
 });
 
 const CreateAuthorInput = createArkInputType(CreateAuthorInputSchema, {
@@ -76,6 +118,28 @@ const CreateAuthorInput = createArkInputType(CreateAuthorInputSchema, {
 const CreateBookInput = createArkInputType(CreateBookInputSchema, {
     name: 'LibCreateBookInput',
 });
+
+// Discriminated union — exercises createArkUnion's default schema-based resolveType.
+const CreateBookResult = createArkUnion([Book, ValidationError], {
+    description: 'Either the created book or a validation error explaining why creation was rejected.',
+    name: 'LibCreateBookResult',
+});
+
+// Pick / Omit type helpers projected from the Book object type.
+const BookSummary = arkPick(Book, ['id', 'title'], { name: 'LibBookSummary' });
+const BookWithoutAuthor = arkOmit(Book, ['authorId'], { name: 'LibBookWithoutAuthor' });
+
+// Cursor-paginated args + Connection — Relay shape baked in, plus a user-supplied `titlePrefix?` filter.
+// Re-decorating with `@ArgsType()` is required so NestJS registers the subclass; the parent's @ArgsType()
+// metadata is on the parent constructor, not the subclass.
+@ArgsType()
+class LibBookListArgs extends createArkCursorPaginatedArgsType(type({ 'titlePrefix?': 'string > 0' }), {
+    defaultFirst: 5,
+    maxPageSize: 50,
+    name: 'LibBookListArgs',
+}) {}
+
+const { connection: BookConnection } = createArkConnectionType(Book, 'LibBook');
 
 // =============================================================================
 // In-memory state
@@ -97,11 +161,62 @@ interface TagRow {
     name: string;
     format: 'PHYSICAL' | 'EBOOK' | 'AUDIOBOOK';
 }
+interface ValidationErrorRow {
+    code: string;
+    message: string;
+}
 
 class LibraryStore {
     authors = new Map<string, AuthorRow>();
     books = new Map<string, BookRow>();
     tags = new Map<string, TagRow>();
+}
+
+// Tiny in-memory pubsub. Real apps would use `graphql-subscriptions` (or a Redis-backed adapter); the integration
+// test only needs `asyncIterator()` to exist so NestJS can register the subscription field in the schema.
+class TinyPubSub<T> {
+    private listeners = new Set<(v: T) => void>();
+
+    publish(value: T): void {
+        for (const listener of this.listeners) {
+            listener(value);
+        }
+    }
+
+    asyncIterator(): AsyncIterableIterator<T> {
+        const queue: T[] = [];
+        const resolvers: ((r: IteratorResult<T>) => void)[] = [];
+        const listener = (v: T): void => {
+            const next = resolvers.shift();
+            if (next) {
+                next({ done: false, value: v });
+            } else {
+                queue.push(v);
+            }
+        };
+        this.listeners.add(listener);
+        const iterator: AsyncIterableIterator<T> = {
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+            next: (): Promise<IteratorResult<T>> => {
+                const next = queue.shift();
+                if (next !== undefined) {
+                    return Promise.resolve({ done: false, value: next });
+                }
+                return new Promise((r) => resolvers.push(r));
+            },
+            return: () => {
+                this.listeners.delete(listener);
+                return Promise.resolve({ done: true, value: undefined as never });
+            },
+            throw: (err) => {
+                this.listeners.delete(listener);
+                return Promise.reject(err);
+            },
+        };
+        return iterator;
+    }
 }
 
 const SEED_AUTHOR_ID = '11111111-1111-4111-8111-111111111111';
@@ -127,17 +242,65 @@ function stableId(seedString: string): string {
     return `00000000-0000-4000-8000-${hex}`;
 }
 
+function encodeCursor(id: string): string {
+    return Buffer.from(id, 'utf8').toString('base64');
+}
+
+function decodeCursor(cursor: string): string {
+    return Buffer.from(cursor, 'base64').toString('utf8');
+}
+
+interface BookEdge {
+    cursor: string;
+    node: BookRow;
+}
+
+interface BookConnectionShape {
+    pageInfo: {
+        hasNextPage: boolean;
+        hasPreviousPage: boolean;
+        startCursor: string | null;
+        endCursor: string | null;
+    };
+    edges: BookEdge[];
+}
+
 // =============================================================================
 // Resolvers — exercise root + field-level resolution
 // =============================================================================
 
 @Resolver(() => Book)
 class BookResolver {
-    constructor(private readonly store: LibraryStore) {}
+    constructor(
+        private readonly store: LibraryStore,
+        private readonly bookCreatedPubSub: TinyPubSub<BookRow>
+    ) {}
 
     @ArkQuery(BookSchema, { name: 'libBook', nullable: true })
     getBook(@Args('id') id: string): BookRow | null {
         return this.store.books.get(id) ?? null;
+    }
+
+    @ArkQuery(BookSchema, { name: 'libBooks', returnType: () => BookConnection })
+    listBooks(@Args() args: LibBookListArgs): BookConnectionShape {
+        const all = [...this.store.books.values()].toSorted((a, b) => a.id.localeCompare(b.id));
+        const filtered = args.titlePrefix
+            ? all.filter((b) => b.title.startsWith(args.titlePrefix as string))
+            : all;
+        const after = args.after ? decodeCursor(args.after) : null;
+        const startIndex = after ? filtered.findIndex((b) => b.id === after) + 1 : 0;
+        const limit = args.first ?? 5;
+        const window = filtered.slice(startIndex, startIndex + limit);
+        const edges = window.map((node) => ({ cursor: encodeCursor(node.id), node }));
+        return {
+            edges,
+            pageInfo: {
+                endCursor: edges.at(-1)?.cursor ?? null,
+                hasNextPage: startIndex + window.length < filtered.length,
+                hasPreviousPage: startIndex > 0,
+                startCursor: edges[0]?.cursor ?? null,
+            },
+        };
     }
 
     @ArkMutation(BookSchema, { name: 'libCreateBook', validate: true })
@@ -160,7 +323,36 @@ class BookResolver {
             title: input.title,
         };
         this.store.books.set(id, row);
+        this.bookCreatedPubSub.publish(row);
         return row;
+    }
+
+    @ArkMutation(BookSchema, {
+        name: 'libCreateBookSafe',
+        returnType: () => CreateBookResult,
+    })
+    createBookSafe(
+        @ArkArgs('input', CreateBookInput) input: typeof CreateBookInputSchema.infer
+    ): BookRow | ValidationErrorRow {
+        if (!this.store.authors.has(input.authorId)) {
+            return { code: 'UNKNOWN_AUTHOR', message: `author ${input.authorId} does not exist` };
+        }
+        const id = stableId(input.title);
+        const row: BookRow = {
+            authorId: input.authorId,
+            id,
+            internalRowId: `row-${id.slice(0, 8)}`,
+            tagIds: input.tagIds,
+            title: input.title,
+        };
+        this.store.books.set(id, row);
+        this.bookCreatedPubSub.publish(row);
+        return row;
+    }
+
+    @ArkSubscription(BookSchema, { name: 'libBookCreated' })
+    bookCreated(): AsyncIterableIterator<BookRow> {
+        return this.bookCreatedPubSub.asyncIterator();
     }
 
     @ResolveField(() => Author)
@@ -207,11 +399,15 @@ class AuthorResolver {
 // AppModule factory — fresh module + state per test run
 // =============================================================================
 
+const PUBSUB_TOKEN = Symbol('LibBookCreatedPubSub');
+
 export function buildLibraryApp(): {
     module: Type<unknown>;
     store: LibraryStore;
+    pubsub: TinyPubSub<BookRow>;
 } {
     const store = new LibraryStore();
+    const pubsub = new TinyPubSub<BookRow>();
     seed(store);
 
     @Module({
@@ -219,7 +415,18 @@ export function buildLibraryApp(): {
             GraphQLModule.forRoot<ApolloDriverConfig>({
                 autoSchemaFile: true,
                 buildSchemaOptions: {
-                    orphanedTypes: [Author, Book, Tag, CreateAuthorInput, CreateBookInput],
+                    orphanedTypes: [
+                        Author,
+                        Book,
+                        Tag,
+                        ValidationError,
+                        Identifiable,
+                        BookSummary,
+                        BookWithoutAuthor,
+                        BookConnection,
+                        CreateAuthorInput,
+                        CreateBookInput,
+                    ],
                 },
                 driver: ApolloDriver,
                 introspection: true,
@@ -228,11 +435,16 @@ export function buildLibraryApp(): {
                 sortSchema: true,
             }),
         ],
-        providers: [{ provide: LibraryStore, useValue: store }, BookResolver, AuthorResolver],
+        providers: [
+            { provide: LibraryStore, useValue: store },
+            { provide: TinyPubSub, useValue: pubsub },
+            BookResolver,
+            AuthorResolver,
+        ],
     })
     class LibraryAppModule {}
 
-    return { module: LibraryAppModule, store };
+    return { module: LibraryAppModule, pubsub, store };
 }
 
 export {
@@ -240,12 +452,21 @@ export {
     Author,
     AuthorSchema,
     Book,
+    BookConnection,
+    LibBookListArgs,
     BookSchema,
+    BookSummary,
+    BookWithoutAuthor,
     CreateAuthorInput,
     CreateBookInput,
+    CreateBookResult,
+    Identifiable,
     LibraryStore,
+    PUBSUB_TOKEN,
     SEED_AUTHOR_ID,
     SEED_TAG_EBOOK,
     SEED_TAG_PHYSICAL,
     Tag,
+    TinyPubSub,
+    ValidationError,
 };

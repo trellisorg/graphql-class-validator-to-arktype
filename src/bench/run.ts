@@ -74,10 +74,47 @@ interface BenchResult {
     avgLat: number;
     bytesSec: number;
     nonOk: number;
+    eventLoopLagMeanMs: number;
+    eventLoopLagP99Ms: number;
+    eventLoopLagMaxMs: number;
+    cpuPercentOfOneCore: number;
+    cpuUserMs: number;
+    cpuSystemMs: number;
+    heapUsedMB: number;
+    heapTotalMB: number;
+    rssMB: number;
+}
+
+interface BenchSnapshot {
+    elapsedSec: number;
+    eventLoopLagMeanMs: number;
+    eventLoopLagP99Ms: number;
+    eventLoopLagMaxMs: number;
+    cpuUserMs: number;
+    cpuSystemMs: number;
+    cpuPercentOfOneCore: number;
+    heapUsedMB: number;
+    heapTotalMB: number;
+    rssMB: number;
+}
+
+async function resetStats(spec: ServerSpec): Promise<void> {
+    await fetch(`http://127.0.0.1:${spec.port}/__bench/reset`, { method: 'POST' });
+}
+
+async function readStats(spec: ServerSpec): Promise<BenchSnapshot> {
+    const res = await fetch(`http://127.0.0.1:${spec.port}/__bench/stats`);
+    if (!res.ok) {
+        throw new Error(`failed to read stats from ${spec.label}: ${res.status}`);
+    }
+    return (await res.json()) as BenchSnapshot;
 }
 
 async function runBench(spec: ServerSpec, body: string, label: string): Promise<BenchResult> {
     const url = `http://127.0.0.1:${spec.port}/graphql`;
+    // Reset right before the load test so the post-test snapshot reflects only this run's CPU + event-loop
+    // pressure; the heap / RSS values are sampled afterwards as snapshots, not deltas.
+    await resetStats(spec);
     const result: any = await new Promise((resolve, reject) => {
         const inst = autocannon(
             {
@@ -92,15 +129,25 @@ async function runBench(spec: ServerSpec, body: string, label: string): Promise<
         );
         inst.on('error', reject);
     });
+    const stats = await readStats(spec);
     return {
         avgLat: result.latency.average,
         bytesSec: result.throughput.average,
+        cpuPercentOfOneCore: stats.cpuPercentOfOneCore,
+        cpuSystemMs: stats.cpuSystemMs,
+        cpuUserMs: stats.cpuUserMs,
+        eventLoopLagMaxMs: stats.eventLoopLagMaxMs,
+        eventLoopLagMeanMs: stats.eventLoopLagMeanMs,
+        eventLoopLagP99Ms: stats.eventLoopLagP99Ms,
+        heapTotalMB: stats.heapTotalMB,
+        heapUsedMB: stats.heapUsedMB,
         label: spec.label,
         nonOk: result.non2xx,
         p50: result.latency.p50,
         p95: result.latency.p97_5 ?? result.latency.p95,
         p99: result.latency.p99,
         rps: result.requests.average,
+        rssMB: stats.rssMB,
         variant: label,
     };
 }
@@ -164,10 +211,12 @@ async function main() {
         }
 
         console.log('=== summary ===');
-        console.log('variant      | server          |   rps   | mean(ms) | p50  | p95  | p99   | non-2xx');
+        console.log(
+            'variant      | server          |   rps   | mean(ms) | p50  | p95  | p99   | loop-mean | loop-p99 | cpu%  | heap MB | rss MB | non-2xx'
+        );
         for (const r of rows) {
             console.log(
-                `${r.variant.padEnd(12)} | ${r.label.padEnd(15)} | ${String(Math.round(r.rps)).padStart(7)} | ${r.avgLat.toFixed(2).padStart(8)} | ${String(r.p50).padStart(4)} | ${String(r.p95).padStart(4)} | ${String(r.p99).padStart(5)} | ${r.nonOk}`
+                `${r.variant.padEnd(12)} | ${r.label.padEnd(15)} | ${String(Math.round(r.rps)).padStart(7)} | ${r.avgLat.toFixed(2).padStart(8)} | ${String(r.p50).padStart(4)} | ${String(r.p95).padStart(4)} | ${String(r.p99).padStart(5)} | ${r.eventLoopLagMeanMs.toFixed(2).padStart(9)} | ${r.eventLoopLagP99Ms.toFixed(2).padStart(8)} | ${r.cpuPercentOfOneCore.toFixed(1).padStart(5)} | ${r.heapUsedMB.toFixed(1).padStart(7)} | ${r.rssMB.toFixed(1).padStart(6)} | ${r.nonOk}`
             );
         }
     } finally {
@@ -180,6 +229,9 @@ async function main() {
 function printRow(r: BenchResult) {
     console.log(
         `  ${r.label.padEnd(15)} rps=${String(Math.round(r.rps)).padStart(6)}  mean=${r.avgLat.toFixed(2).padStart(7)}ms  p50=${String(r.p50).padStart(4)}  p95=${String(r.p95).padStart(4)}  p99=${String(r.p99).padStart(5)}  non2xx=${r.nonOk}`
+    );
+    console.log(
+        `      loop-lag mean=${r.eventLoopLagMeanMs.toFixed(2).padStart(6)}ms  p99=${r.eventLoopLagP99Ms.toFixed(2).padStart(6)}ms  max=${r.eventLoopLagMaxMs.toFixed(2).padStart(6)}ms  cpu=${r.cpuPercentOfOneCore.toFixed(1).padStart(5)}% (user=${r.cpuUserMs.toFixed(0)}ms sys=${r.cpuSystemMs.toFixed(0)}ms)  heap=${r.heapUsedMB.toFixed(1)}/${r.heapTotalMB.toFixed(1)}MB  rss=${r.rssMB.toFixed(1)}MB`
     );
 }
 

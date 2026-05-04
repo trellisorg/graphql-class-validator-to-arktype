@@ -5,6 +5,7 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { GraphQLModule } from '@nestjs/graphql';
 import 'reflect-metadata';
+import { mountBenchStats } from '../shared/bench-stats';
 import {
     Author,
     Book,
@@ -60,6 +61,7 @@ async function bootstrap() {
             whitelist: true,
         })
     );
+    mountBenchStats(app);
     const port = Number(process.env.PORT ?? 3009);
     await app.listen(port);
     console.log(`[classvalidator-demo] listening on http://localhost:${port}/graphql`);

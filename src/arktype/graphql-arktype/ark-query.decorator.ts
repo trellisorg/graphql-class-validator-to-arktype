@@ -1,4 +1,4 @@
-import { Mutation, Query, type ReturnTypeFunc } from '@nestjs/graphql';
+import { Mutation, Query, Subscription, type ReturnTypeFunc } from '@nestjs/graphql';
 import { ArkErrors, type Type as ArkType } from 'arktype';
 import { isPromise } from 'es-toolkit';
 import { arkRegistry } from './core';
@@ -40,6 +40,17 @@ export function ArkQuery(returnSchema: ArkType<any>, options: ArkOperationOption
  */
 export function ArkMutation(returnSchema: ArkType<any>, options: ArkOperationOptions = {}): MethodDecorator {
     return makeOpDecorator(Mutation, returnSchema, options);
+}
+
+/**
+ * Subscription counterpart to {@link ArkQuery}. The decorated method should return an `AsyncIterator` (typically
+ * via `pubsub.asyncIterator(topic)`); NestJS will pass each emitted payload through the resolver pipeline.
+ *
+ * `options.validate` runs the registered schema against each payload before it leaves the server. Off by default
+ * — most subscription pipelines validate at publish time instead.
+ */
+export function ArkSubscription(returnSchema: ArkType<any>, options: ArkOperationOptions = {}): MethodDecorator {
+    return makeOpDecorator(Subscription as typeof Query, returnSchema, options);
 }
 
 function makeOpDecorator(

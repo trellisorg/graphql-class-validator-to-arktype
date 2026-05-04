@@ -17,7 +17,7 @@ export const ARK_KIND_METADATA = Symbol('ark:kind');
  */
 export const ARK_VALIDATE_OUTPUT_METADATA = Symbol('ark:validate-output');
 
-export type ArkClassKind = 'input' | 'object' | 'args';
+export type ArkClassKind = 'input' | 'object' | 'args' | 'interface';
 
 export function setArkSchema(target: Function, schema: ArkType<any>, kind: ArkClassKind): void {
     Reflect.defineMetadata(ARK_SCHEMA_METADATA, schema, target);

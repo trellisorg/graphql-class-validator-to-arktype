@@ -2,6 +2,20 @@
 export { createArkArgsType, type CreateArkArgsTypeOptions } from './ark-args-type';
 export { createArkInputType, type CreateArkInputTypeOptions } from './ark-input-type';
 export { createArkObjectType, type CreateArkObjectTypeOptions } from './ark-object-type';
+export { createArkInterfaceType, type CreateArkInterfaceTypeOptions } from './ark-interface-type';
+
+// Union / connection / pagination
+export { createArkUnion, type CreateArkUnionOptions } from './ark-union';
+export {
+    createArkConnectionType,
+    type ArkConnectionType,
+    type CreateArkConnectionTypeOptions,
+} from './ark-connection';
+export {
+    createArkCursorPaginatedArgsType,
+    type CreateArkCursorPaginatedArgsTypeOptions,
+    type CursorPaginatedArgsBase,
+} from './ark-cursor-paginated-args';
 
 // Enum support
 export { registerArkEnum, validateArkEnum, type RegisterArkEnumOptions } from './ark-enum';
@@ -14,7 +28,7 @@ export { arkId, arkIdArray, arkIdFields } from './ark-field-helpers';
 
 // Resolver-side decorators and pipe
 export { ArkArgs } from './ark-args.decorator';
-export { ArkMutation, ArkQuery, type ArkOperationOptions } from './ark-query.decorator';
+export { ArkMutation, ArkQuery, ArkSubscription, type ArkOperationOptions } from './ark-query.decorator';
 export { ArkValidationPipe } from './ark-validation.pipe';
 
 // Core (low-level access for advanced users / library extension)

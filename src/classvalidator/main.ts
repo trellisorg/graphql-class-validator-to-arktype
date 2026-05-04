@@ -5,6 +5,7 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { GraphQLModule } from '@nestjs/graphql';
 import 'reflect-metadata';
+import { mountBenchStats } from '../shared/bench-stats';
 import { CartItemInput, CartSummaryInput, CartSummaryResult, SponsorInput, TagInput } from './dtos';
 import './filler-types';
 import { FILLER_CLASSES } from './filler-types';
@@ -50,6 +51,7 @@ async function bootstrap() {
             whitelist: true,
         })
     );
+    mountBenchStats(app);
     const port = Number(process.env.PORT ?? 3001);
     await app.listen(port);
     // eslint-disable-next-line no-console

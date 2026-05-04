@@ -102,10 +102,21 @@ export function buildDecoratedClass<T extends ArkType<any>>(
         if (resolved.hidden) {
             HideField()(Cls.prototype, propName);
         } else {
-            Field(resolved.type, {
+            const defaultValue = resolved.defaultValue ?? propSchema.default;
+            // The `Field()` overload set is a discriminated union over the `nullable` slot — `nullable: boolean`
+            // (rather than a concrete `true`/`false` literal) doesn't fit any single branch, so we hand it the
+            // options object via a typed alias rather than asking the compiler to pick a branch.
+            const fieldOptions: Record<string, unknown> = {
                 description: propSchema.description,
                 nullable: resolved.nullable,
-            })(Cls.prototype, propName);
+            };
+            if (resolved.name !== undefined) {
+                fieldOptions.name = resolved.name;
+            }
+            if (defaultValue !== undefined) {
+                fieldOptions.defaultValue = defaultValue;
+            }
+            Field(resolved.type, fieldOptions as Parameters<typeof Field>[1])(Cls.prototype, propName);
         }
     }
 

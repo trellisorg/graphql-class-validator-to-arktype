@@ -3,12 +3,7 @@
     "compilerOptions": {
         "moduleResolution": "bundler",
         "module": "preserve",
-        "noEmit": true,
-        "strict": true,
-        "noImplicitAny": true,
-        "strictPropertyInitialization": true,
-        "skipLibCheck": true,
-        "lib": ["ES2023"]
+        "lib": ["esnext"]
     },
     "include": ["src/**/*"],
     "exclude": ["src/util-decorators/**/*", "node_modules", "dist"]

@@ -10,11 +10,11 @@
         "emitDecoratorMetadata": true,
         "useDefineForClassFields": false,
         "resolveJsonModule": true,
-        "noImplicitAny": false,
-        "strictPropertyInitialization": false,
+		"noImplicitAny": true,
+		"strictPropertyInitialization": true,
         "forceConsistentCasingInFileNames": true,
         "outDir": "dist",
-        "lib": ["ES2022"]
+        "lib": ["esnext"]
     },
     "include": ["src/**/*"]
 }
