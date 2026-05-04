@@ -108,15 +108,29 @@ src/
 │   ├── resolver.ts                      # processCart mutation
 │   └── main.ts                          # NestJS bootstrap
 ├── arktype/
-│   ├── graphql-arktype/                 # the ArkType ↔ GraphQL prototype lib
-│   │   ├── create-ark-input-type.ts     #   walks toJsonSchema → @Field calls
-│   │   ├── ark-validation.pipe.ts       #   pipe that runs schema(value)
+│   ├── graphql-arktype/                 # ArkType ↔ NestJS-GraphQL library
+│   │   ├── core/                        #   shared schema → GQL helpers
+│   │   │   ├── ark-meta.ts              #     metadata symbols + schema/class registry
+│   │   │   ├── json-schema-to-gql.ts    #     resolves a property's GraphQL type
+│   │   │   └── build-decorated-class.ts #     shared factory pipeline
+│   │   ├── ark-input-type.ts            #   createArkInputType (@InputType analogue)
+│   │   ├── ark-object-type.ts           #   createArkObjectType (@ObjectType analogue)
+│   │   ├── ark-args-type.ts             #   createArkArgsType (@ArgsType analogue)
+│   │   ├── ark-enum.ts                  #   registerArkEnum (string-literal unions)
+│   │   ├── ark-type-helpers.ts          #   arkPartial / arkPick / arkOmit / arkRequired / arkIntersection
 │   │   ├── ark-args.decorator.ts        #   @ArkArgs (sets design:paramtypes)
+│   │   ├── ark-query.decorator.ts       #   @ArkQuery / @ArkMutation (auto return type, opt-in output validate)
+│   │   ├── ark-validation.pipe.ts       #   global pipe that runs schema(value)
 │   │   └── index.ts
-│   ├── dtos.ts                          # ArkType schemas + createArkInputType wiring
+│   ├── dtos.ts                          # ArkType schemas + bench wiring
 │   ├── filler-types.ts                  # 80 ArkType-driven InputType classes
-│   ├── resolver.ts                      # same processCart mutation
+│   ├── resolver.ts                      # processCart mutation (bench surface)
 │   └── main.ts
+├── arktype-demo/                        # exercises every helper in graphql-arktype
+│   ├── schemas.ts                       #   ArkType schemas (Author/Book/Order/...)
+│   ├── dtos.ts                          #   InputType + ObjectType + ArgsType + enum + partial/pick/omit
+│   ├── resolver.ts                      #   uses @ArkQuery/@ArkMutation/@ArkArgs
+│   └── main.ts                          #   `pnpm start:demo` boots on :3010
 ├── zod/
 │   ├── graphql-zod/                     # the Zod v4 ↔ GraphQL prototype lib
 │   │   ├── create-zod-input-type.ts     #   walks z.toJSONSchema → @Field calls
@@ -132,26 +146,72 @@ src/
     └── run.ts                           # autocannon end-to-end driver (3-way)
 ```
 
-## Notes on the prototype libraries
+## graphql-arktype: the library prototype
 
-Both `graphql-arktype/` and `graphql-zod/` are intentionally tiny mirrors of
-each other (~150 LoC each). The shape:
+`src/arktype/graphql-arktype/` is now a library-shaped ArkType ↔
+`@nestjs/graphql` integration. Surface area, mapped to the NestJS GraphQL
+constructs it replaces:
 
-- `createXxxInputType(schema, { name, fields? })` walks the schema's JSON
-  Schema export (`schema.toJsonSchema()` for ArkType, `z.toJSONSchema(schema)`
-  for Zod v4) and calls `@Field()` for each property. Scalar GraphQL types
-  are inferred from JSON-Schema `type`. Object and array-of-object fields
-  can't be inferred from JSON schema alone (the nested GraphQL type isn't
-  named there), so callers supply a `fields` override map:
-  `{ items: () => [CartItemInput] }`. Ordering matters — leaf input types
-  must be created before parents reference them.
-- `XxxValidationPipe` reads the schema attached to the input class via a
-  reflect-metadata symbol and runs it. Validation failure → `BadRequestException`.
-- `XxxArgs(name, InputClass)` is a drop-in for `@Args(name, { type })`
-  that ALSO sets `design:paramtypes[index] = InputClass`. This is required
-  because programmatically-created classes resolve to a constructor type in
-  TypeScript, which the compiler emits as `Object` in metadata, blinding
-  the pipe to the input class.
-- `nestjs-arktype` and `nestjs-zod` are both currently scoped to
-  Swagger/REST DTOs; neither registers `@nestjs/graphql` `@InputType`
-  metadata, which is the integration these prototype libraries provide.
+| `@nestjs/graphql`            | `graphql-arktype`                                      |
+| ---------------------------- | ------------------------------------------------------ |
+| `@InputType()` + `@Field()`  | `createArkInputType(schema, { name, fields? })`        |
+| `@ObjectType()` + `@Field()` | `createArkObjectType(schema, { name, fields? })`       |
+| `@ArgsType()`                | `createArkArgsType(schema, { name?, fields? })`        |
+| `registerEnumType(...)`      | `registerArkEnum(schema, { name, valuesMap? })`        |
+| `PartialType`                | `arkPartial(parent, options)`                          |
+| `PickType`                   | `arkPick(parent, ['key', ...] as const, options)`      |
+| `OmitType`                   | `arkOmit(parent, ['key', ...] as const, options)`      |
+| `Required` (no NestJS equiv) | `arkRequired(parent, options)`                         |
+| `IntersectionType`           | `arkIntersection(a, b, options)`                       |
+| `@Args('input', {type})`     | `@ArkArgs('input', InputClass)` (patches paramtypes)   |
+| `@Query(returnType)`         | `@ArkQuery(returnSchema, { validate? })`               |
+| `@Mutation(returnType)`      | `@ArkMutation(returnSchema, { validate? })`            |
+| global `ValidationPipe`      | global `ArkValidationPipe`                             |
+
+Highlights of the prototype:
+
+- **Auto nested-type resolution.** `createArkXxxType` registers each schema
+  under its canonical JSON shape. When a parent's JSON schema inlines a
+  nested object, the registry resolves it back to the previously-registered
+  GraphQL class without an explicit `fields:` override. The `fields:` override
+  is still supported for forced types (e.g. ID, custom scalars) and for
+  enums (which JSON Schema can't round-trip back to a registered enum).
+- **JSON Schema → GraphQL coverage.** Strings/numbers/booleans/integers,
+  arrays (recursive), nullable from JSON Schema `required`, optional via
+  `anyOf [..., {type:"null"}]`, `format: "uuid"` → `ID`, `format: "date-time"`
+  → `GraphQLISODateTime`. Configurable via `resolveOptions: { idFormats?,
+  isoDateTime? }`.
+- **Type helpers operate on the schema, not the class.** `arkPartial`,
+  `arkPick`, `arkOmit`, `arkRequired`, `arkIntersection` all delegate to
+  ArkType's native `.partial()` / `.pick()` / `.omit()` / `.required()` /
+  `.merge()` and re-run the same factory in the same kind (input/object).
+  Kind is remembered as `ARK_KIND_METADATA` on the class so the helper
+  emits the same flavour as the parent.
+- **`@ArkQuery` / `@ArkMutation` derive the GraphQL return type from the
+  schema** by registry lookup. Pass `validate: true` to also run the
+  schema over the resolver's return value (useful in dev / staging; off by
+  default since output validation isn't free).
+- **`registerArkEnum`** drives `@nestjs/graphql`'s `registerEnumType` from
+  an ArkType string-literal union (`type("'A' | 'B' | 'C'")`). Returns a
+  `{ schema, values, gqlEnumRef, name }` bundle — pass `gqlEnumRef` via
+  `fields: { status: () => OrderStatus.gqlEnumRef }` to attach the enum to
+  an InputType / ObjectType field.
+
+The `src/arktype-demo/` app (run with `pnpm start:demo`) exercises every
+public helper end-to-end against a real Apollo server: input validation
+rejecting bad payloads, output validation rejecting buggy resolvers,
+PartialType / PickType / OmitType derived classes appearing in the schema,
+the enum surfaced via introspection, and the args bundle parsed at the
+GraphQL layer.
+
+## Notes on the Zod prototype
+
+`src/zod/graphql-zod/` is the much-smaller proof-of-concept shape from the
+benchmark — input type only, no enum / object / partial helpers. The same
+expansion would apply if Zod becomes the chosen direction; the
+`createXxxInputType` core in `core/build-decorated-class.ts` is intentionally
+schema-engine-agnostic and a Zod variant could share it.
+
+`nestjs-arktype` and `nestjs-zod` are both currently scoped to Swagger/REST
+DTOs; neither registers `@nestjs/graphql` metadata, which is the integration
+the local libraries provide.

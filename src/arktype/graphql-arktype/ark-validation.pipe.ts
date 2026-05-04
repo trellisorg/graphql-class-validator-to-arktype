@@ -1,6 +1,6 @@
 import { ArgumentMetadata, BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
 import { ArkErrors } from 'arktype';
-import { getArkSchema } from './create-ark-input-type';
+import { getArkSchema } from './core';
 
 @Injectable()
 export class ArkValidationPipe implements PipeTransform {

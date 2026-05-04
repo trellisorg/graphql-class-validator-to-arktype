@@ -7,6 +7,7 @@
     "start:cv": "ts-node -T src/classvalidator/main.ts",
     "start:ak": "ts-node -T src/arktype/main.ts",
     "start:zod": "ts-node -T src/zod/main.ts",
+    "start:demo": "ts-node -T src/arktype-demo/main.ts",
     "bench": "ts-node -T src/bench/run.ts",
     "bench:micro": "ts-node -T src/bench/micro.ts"
   },
