@@ -1,4 +1,4 @@
-# GraphQL: class-validator vs ArkType benchmark
+# GraphQL: class-validator vs Zod v4 vs ArkType benchmark
 
 A reproduction of the validation hot path called out in
 `event-loop-blocking-956707398/findings.md` (Aurora's `POST /graphql`
@@ -13,82 +13,88 @@ ANR/event-loop block on 2026-04-26).
   classes are also registered to inflate `getMetadataStorage()` so the
   per-call walk has realistic mass — same pattern that made Aurora's profile
   show 6.9 s of `getTargetValidationMetadatas` in a single sample.
-- **ArkType path** (`src/arktype/`): `@Field` registration is generated
-  programmatically from ArkType schemas via `createArkInputType(schema, …)`
-  (the prototype library at `src/arktype/graphql-arktype/`). A custom
-  `ArkValidationPipe` runs `schema(value)` per request, no global registry.
-  Same 80 filler input types registered for schema parity.
-- **Same external GraphQL schema** on both servers (verified via the same
-  mutation succeeding on both with identical input).
+- **Zod v4 path** (`src/zod/`): `@Field` registration is generated
+  programmatically from Zod v4 schemas via `createZodInputType(schema, …)`
+  (the prototype library at `src/zod/graphql-zod/`). A custom
+  `ZodValidationPipe` runs `schema.safeParse(value)` per request. Same 80
+  filler input types registered for parity. `nestjs-zod@5.3.0` was the
+  starting point but is scoped to REST/Swagger; we built a parallel GraphQL
+  layer using Zod v4's `z.toJSONSchema()` for the schema generation.
+- **ArkType path** (`src/arktype/`): same shape as the Zod path, with
+  `createArkInputType` driving `@Field` calls from
+  `schema.toJsonSchema()` and `ArkValidationPipe` running `schema(value)`.
+- **Same external GraphQL schema** on all three servers (verified — same
+  mutation succeeds on all three with identical input).
 - **Same payloads**: `src/shared/payload.ts` generates a CartSummary input
-  with N items × M tags × K sponsors; the actual values are deterministic.
+  with N items × M tags × K sponsors; values are deterministic.
 
 ## Results — direct in-process validation (`pnpm bench:micro`)
 
 500 iterations per variant, 50 warmup iterations. Time is per-validation in ms.
 
-| variant  | items | payload  | class-validator mean | arktype mean | ratio |
-| -------- | ----: | -------: | -------------------: | -----------: | ----: |
-| tiny     |     1 |  0.3 KB  |              0.030ms |      0.002ms |  16x  |
-| small    |    10 |  3.5 KB  |              0.194ms |      0.004ms |  46x  |
-| medium   |    50 | 27.8 KB  |              1.373ms |      0.026ms |  54x  |
-| large    |   200 |  172 KB  |              9.622ms |      0.139ms |  70x  |
-| xlarge   |   500 |  498 KB  |             25.046ms |      0.418ms |  60x  |
+| variant  | items | payload  | class-validator | zod v4 | **arktype** | zod vs cv | ark vs cv | ark vs zod |
+| -------- | ----: | -------: | --------------: | -----: | ----------: | --------: | --------: | ---------: |
+| tiny     |     1 |  0.3 KB  |        0.036 ms | 0.003 ms |  0.002 ms |  10.9×    |   23.4×   |   2.1×     |
+| small    |    10 |  3.5 KB  |        0.192 ms | 0.014 ms |  0.004 ms |  13.4×    |   44.8×   |   3.4×     |
+| medium   |    50 | 27.8 KB  |        1.549 ms | 0.098 ms |  0.026 ms |  15.7×    |   59.9×   |   3.8×     |
+| large    |   200 |  172 KB  |        9.377 ms | 0.591 ms |  0.136 ms |  15.9×    |   68.7×   |   4.3×     |
+| xlarge   |   500 |  498 KB  |       25.606 ms | 1.600 ms |  0.394 ms |  16.0×    |   65.1×   |   4.1×     |
 
-p99 ratios on the 500-item payload: class-validator p99 = 32.4 ms,
-ArkType p99 = 0.6 ms — **53× lower tail latency**.
+p99 ratios on the 200-item payload: class-validator p99 = 21.4 ms,
+zod p99 = 0.95 ms (**22.6× lower**), ArkType p99 = 0.16 ms (**135× lower**).
 
-Lines up with the moltar TS-runtime-type benchmarks cited in
-`analyses/01-validation-libraries-v2.md` (~100×). The HTTP-path overhead
-(JSON parse, GraphQL execution, Apollo, NestJS DI) dilutes the ratio at the
-edge but the validation cost itself is the dominant variable on large
-payloads, which is exactly the Aurora hot path.
+ArkType results align with the moltar TS-runtime-type benchmarks cited in
+`analyses/01-validation-libraries-v2.md` (~100×). Zod v4 with its JIT
+compiler is the strong middle: not as fast as ArkType but a much smaller
+ecosystem-migration cost (Zod is the de-facto schema library many teams
+already use).
 
 ## Results — end-to-end HTTP (`pnpm bench`)
 
 `autocannon` driving a real `POST /graphql` mutation, 16 connections, 8 s per run.
 
-| variant  | items | body    | server          |    rps |    mean | p99   |
-| -------- | ----: | ------: | --------------- | -----: | ------: | ----: |
-| small    |    10 |  3.6 KB | class-validator |  3,399 |  4.3 ms |  9 ms |
-| small    |    10 |  3.6 KB | **arktype**     |  8,205 |  1.2 ms |  3 ms |
-| medium   |    50 | 27.9 KB | class-validator |    488 | 32.2 ms | 65 ms |
-| medium   |    50 | 27.9 KB | **arktype**     |  1,980 |  7.6 ms | 15 ms |
-| large    |   200 |  172 KB | class-validator |     84 |  187 ms | 369 ms |
-| large    |   200 |  172 KB | **arktype**     |    356 | 44.3 ms |  87 ms |
+| variant  | items | body    | server          |    rps |    mean | p99    |
+| -------- | ----: | ------: | --------------- | -----: | ------: | -----: |
+| small    |    10 |  3.6 KB | class-validator |  3,358 |  4.4 ms |   9 ms |
+| small    |    10 |  3.6 KB | zod v4          |  7,569 |  1.4 ms |   4 ms |
+| small    |    10 |  3.6 KB | **arktype**     |  8,391 |  1.2 ms |   3 ms |
+| medium   |    50 | 27.9 KB | class-validator |    523 | 30.0 ms |  59 ms |
+| medium   |    50 | 27.9 KB | zod v4          |  1,731 |  8.8 ms |  18 ms |
+| medium   |    50 | 27.9 KB | **arktype**     |  1,996 |  7.6 ms |  15 ms |
+| large    |   200 |  172 KB | class-validator |     83 |  191 ms | 443 ms |
+| large    |   200 |  172 KB | zod v4          |    302 |  52 ms  | 115 ms |
+| large    |   200 |  172 KB | **arktype**     |    370 |  43 ms  |  85 ms |
 
-End-to-end speedup at 200 items: **4.2× more rps, 4.2× lower p99**.
+End-to-end speedups vs class-validator at 200 items:
+- **Zod v4:** 3.7× more rps, 3.9× lower p99
+- **ArkType:** 4.5× more rps, 5.2× lower p99
 
-The 369 ms p99 on the class-validator side at 200 items is the operationally
+The 443 ms p99 on the class-validator side at 200 items is the operationally
 important number: it's well past the 1 s ANR threshold under load (queue
 depth + concurrent requests), and matches the per-request floor that
-contributed to the loop-block window in the findings.
+contributed to the loop-block window in the findings. Both Zod and ArkType
+keep p99 comfortably under 200 ms at the same load.
 
-## What this reproduces from the findings
+## Tradeoffs at a glance
 
-1. **The metadata-walk cost is real and scales with payload size.** Every
-   class-validator validation call walks `getMetadataStorage()` per nested
-   target; with 80+ classes registered and a deeply nested input array, the
-   per-call cost grows with the input size, not the schema size. The
-   xlarge-row 25 ms mean validates one input one time on an idle box —
-   under concurrent traffic on a 2-CPU pod with throttling this becomes the
-   loop-block visible in the Sentry ANR data.
-2. **ArkType has no global registry walk.** Validation cost is per-schema,
-   so adding more schemas to the project doesn't slow other endpoints down.
-3. **`createArkInputType` + ArkType schema is a feasible code-first
-   GraphQL replacement for the class-validator + decorator stack.** The
-   prototype is ~150 LoC; the resulting GraphQL schema is identical to the
-   class-validator path's (verified by both servers accepting and rejecting
-   the same payloads).
+| dimension                                   | class-validator | zod v4         | arktype       |
+| ------------------------------------------- | --------------- | -------------- | ------------- |
+| validation cost (200-item p99)              | 21 ms           | 0.95 ms        | **0.16 ms**   |
+| end-to-end HTTP rps (200 items)             | 83              | 302            | **370**       |
+| schema definition style                     | TS class + decorators | TS expression | TS expression / DSL |
+| GraphQL code-first integration              | first-class     | needs prototype lib | needs prototype lib |
+| migration cost from class-validator         | n/a             | medium (familiar API) | larger (new DSL) |
+| ecosystem familiarity                       | high            | very high      | newer         |
 
 ## Run it
 
 ```bash
 pnpm install
-pnpm bench:micro                  # in-process validation cost
+pnpm bench:micro                  # in-process validation cost (all 3 engines)
 PORT=3001 pnpm start:cv           # class-validator server
 PORT=3002 pnpm start:ak           # arktype server
-BENCH_SECONDS=8 pnpm bench        # end-to-end HTTP comparison
+PORT=3003 pnpm start:zod          # zod v4 server
+BENCH_SECONDS=8 pnpm bench        # end-to-end HTTP comparison (all 3 engines)
 ```
 
 ## Layout
@@ -102,7 +108,7 @@ src/
 │   ├── resolver.ts                      # processCart mutation
 │   └── main.ts                          # NestJS bootstrap
 ├── arktype/
-│   ├── graphql-arktype/                 # the prototype library
+│   ├── graphql-arktype/                 # the ArkType ↔ GraphQL prototype lib
 │   │   ├── create-ark-input-type.ts     #   walks toJsonSchema → @Field calls
 │   │   ├── ark-validation.pipe.ts       #   pipe that runs schema(value)
 │   │   ├── ark-args.decorator.ts        #   @ArkArgs (sets design:paramtypes)
@@ -111,28 +117,41 @@ src/
 │   ├── filler-types.ts                  # 80 ArkType-driven InputType classes
 │   ├── resolver.ts                      # same processCart mutation
 │   └── main.ts
+├── zod/
+│   ├── graphql-zod/                     # the Zod v4 ↔ GraphQL prototype lib
+│   │   ├── create-zod-input-type.ts     #   walks z.toJSONSchema → @Field calls
+│   │   ├── zod-validation.pipe.ts       #   pipe that runs schema.safeParse
+│   │   ├── zod-args.decorator.ts        #   @ZodArgs (sets design:paramtypes)
+│   │   └── index.ts
+│   ├── dtos.ts                          # Zod schemas + createZodInputType wiring
+│   ├── filler-types.ts                  # 80 Zod-driven InputType classes
+│   ├── resolver.ts
+│   └── main.ts
 └── bench/
-    ├── micro.ts                         # in-process validate-only loop
-    └── run.ts                           # autocannon end-to-end driver
+    ├── micro.ts                         # in-process validate-only loop (3-way)
+    └── run.ts                           # autocannon end-to-end driver (3-way)
 ```
 
-## Notes on the prototype
+## Notes on the prototype libraries
 
-- `createArkInputType(schema, { name, fields? })` walks
-  `schema.toJsonSchema()` and calls `@Field()` for each property,
-  inferring scalar GraphQL types from JSON-schema `type`. Object and
-  array-of-object fields can't be inferred from JSON schema alone (the
-  nested type isn't named there), so callers supply a `fields` override
-  map: `{ items: () => [CartItemInput] }`. Ordering matters — leaf input
-  types are created first so parents can reference them.
-- `ArkValidationPipe` reads the ArkType schema attached to the input
-  class (via a reflect-metadata symbol) and runs it. Returns `ArkErrors`
-  → `BadRequestException`.
-- `ArkArgs(name, InputClass)` is a drop-in for `@Args(name, { type })`
-  that ALSO sets `design:paramtypes[index] = InputClass` — required
-  because programmatically created classes resolve to a constructor type
-  in TypeScript, which the compiler emits as `Object` in metadata,
-  blinding the pipe to the input class.
-- `nestjs-arktype` was considered but is currently scoped to
-  Swagger/REST DTOs; it does not register `@nestjs/graphql` `@InputType`
-  metadata, which is the integration this prototype provides.
+Both `graphql-arktype/` and `graphql-zod/` are intentionally tiny mirrors of
+each other (~150 LoC each). The shape:
+
+- `createXxxInputType(schema, { name, fields? })` walks the schema's JSON
+  Schema export (`schema.toJsonSchema()` for ArkType, `z.toJSONSchema(schema)`
+  for Zod v4) and calls `@Field()` for each property. Scalar GraphQL types
+  are inferred from JSON-Schema `type`. Object and array-of-object fields
+  can't be inferred from JSON schema alone (the nested GraphQL type isn't
+  named there), so callers supply a `fields` override map:
+  `{ items: () => [CartItemInput] }`. Ordering matters — leaf input types
+  must be created before parents reference them.
+- `XxxValidationPipe` reads the schema attached to the input class via a
+  reflect-metadata symbol and runs it. Validation failure → `BadRequestException`.
+- `XxxArgs(name, InputClass)` is a drop-in for `@Args(name, { type })`
+  that ALSO sets `design:paramtypes[index] = InputClass`. This is required
+  because programmatically-created classes resolve to a constructor type in
+  TypeScript, which the compiler emits as `Object` in metadata, blinding
+  the pipe to the input class.
+- `nestjs-arktype` and `nestjs-zod` are both currently scoped to
+  Swagger/REST DTOs; neither registers `@nestjs/graphql` `@InputType`
+  metadata, which is the integration these prototype libraries provide.

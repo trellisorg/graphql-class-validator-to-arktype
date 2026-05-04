@@ -1,6 +1,4 @@
-// Direct, in-process validation benchmark. Bypasses HTTP/GraphQL/Apollo to
-// isolate the cost of `class-validator.validate()` vs `arkSchema(value)` on
-// the same payload, after both globals have been warmed.
+// Direct, in-process validation benchmark across all three engines.
 
 import 'reflect-metadata';
 import { performance } from 'node:perf_hooks';
@@ -10,8 +8,11 @@ import { plainToInstance } from 'class-transformer';
 import { CartSummaryInput as CvCartSummary } from '../classvalidator/dtos';
 import '../classvalidator/filler-types';
 
-import { CartSummarySchema } from '../arktype/dtos';
+import { CartSummarySchema as ArkCartSummary } from '../arktype/dtos';
 import '../arktype/filler-types';
+
+import { CartSummarySchema as ZodCartSummary } from '../zod/dtos';
+import '../zod/filler-types';
 
 import { buildCartPayload } from '../shared/payload';
 
@@ -43,14 +44,26 @@ async function runClassValidator(payload: any): Promise<{ ok: boolean }> {
 }
 
 function runArktype(payload: any): { ok: boolean } {
-  const out: any = (CartSummarySchema as any)(payload);
-  // ArkErrors instance check — but checking the constructor symbol is enough
-  // to discriminate; for the bench we just want the work done.
+  const out: any = (ArkCartSummary as any)(payload);
   const ok = !(out && out.summary !== undefined && Array.isArray(out));
   return { ok };
 }
 
-function stats(samples: number[]) {
+function runZod(payload: any): { ok: boolean } {
+  const result = ZodCartSummary.safeParse(payload);
+  return { ok: result.success };
+}
+
+interface Stats {
+  n: number;
+  mean: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  max: number;
+}
+
+function stats(samples: number[]): Stats {
   const sorted = [...samples].sort((a, b) => a - b);
   const sum = sorted.reduce((a, b) => a + b, 0);
   const pct = (p: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
@@ -62,6 +75,26 @@ function stats(samples: number[]) {
     p99: pct(0.99),
     max: sorted[sorted.length - 1],
   };
+}
+
+async function timeAsync(fn: () => Promise<unknown>, n: number): Promise<number[]> {
+  const samples: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    await fn();
+    samples.push(performance.now() - t0);
+  }
+  return samples;
+}
+
+function timeSync(fn: () => unknown, n: number): number[] {
+  const samples: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    fn();
+    samples.push(performance.now() - t0);
+  }
+  return samples;
 }
 
 async function main() {
@@ -77,42 +110,36 @@ async function main() {
     });
     const payloadBytes = Buffer.byteLength(JSON.stringify(payload));
 
-    // ---------- class-validator ----------
+    // Warmup all three so each one's caches/JIT are primed.
     for (let i = 0; i < WARMUP; i++) await runClassValidator(payload);
-    const cvSamples: number[] = [];
-    for (let i = 0; i < ITERATIONS; i++) {
-      const t0 = performance.now();
-      const r = await runClassValidator(payload);
-      const t1 = performance.now();
-      cvSamples.push(t1 - t0);
-      if (!r.ok) throw new Error('class-validator unexpectedly rejected the payload');
-    }
-    const cv = stats(cvSamples);
-
-    // ---------- arktype ----------
     for (let i = 0; i < WARMUP; i++) runArktype(payload);
-    const akSamples: number[] = [];
-    for (let i = 0; i < ITERATIONS; i++) {
-      const t0 = performance.now();
-      const r = runArktype(payload);
-      const t1 = performance.now();
-      akSamples.push(t1 - t0);
-      if (!r.ok) throw new Error('arktype unexpectedly rejected the payload');
-    }
+    for (let i = 0; i < WARMUP; i++) runZod(payload);
+
+    const cvSamples = await timeAsync(() => runClassValidator(payload), ITERATIONS);
+    const akSamples = timeSync(() => runArktype(payload), ITERATIONS);
+    const zodSamples = timeSync(() => runZod(payload), ITERATIONS);
+
+    const cv = stats(cvSamples);
     const ak = stats(akSamples);
+    const zod = stats(zodSamples);
 
     console.log(`### ${variant.label.padEnd(8)} | items=${String(variant.itemCount).padStart(3)} | payload≈${(payloadBytes/1024).toFixed(1)} KB`);
+    printRow('class-validator', cv);
+    printRow('zod v4         ', zod);
+    printRow('arktype        ', ak);
     console.log(
-      `  class-validator  mean=${cv.mean.toFixed(3)}ms  p50=${cv.p50.toFixed(3)}  p95=${cv.p95.toFixed(3)}  p99=${cv.p99.toFixed(3)}  max=${cv.max.toFixed(3)}`,
-    );
-    console.log(
-      `  arktype          mean=${ak.mean.toFixed(3)}ms  p50=${ak.p50.toFixed(3)}  p95=${ak.p95.toFixed(3)}  p99=${ak.p99.toFixed(3)}  max=${ak.max.toFixed(3)}`,
-    );
-    console.log(
-      `  ratio (cv / ak)  mean=${(cv.mean / ak.mean).toFixed(1)}x  p99=${(cv.p99 / ak.p99).toFixed(1)}x`,
+      `  ratios (mean): zod=${(cv.mean / zod.mean).toFixed(1)}x  arktype=${(cv.mean / ak.mean).toFixed(1)}x   ` +
+      `(p99): zod=${(cv.p99 / zod.p99).toFixed(1)}x  arktype=${(cv.p99 / ak.p99).toFixed(1)}x   ` +
+      `arktype/zod=${(zod.mean / ak.mean).toFixed(1)}x`,
     );
     console.log();
   }
+}
+
+function printRow(label: string, s: Stats) {
+  console.log(
+    `  ${label}  mean=${s.mean.toFixed(3)}ms  p50=${s.p50.toFixed(3)}  p95=${s.p95.toFixed(3)}  p99=${s.p99.toFixed(3)}  max=${s.max.toFixed(3)}`,
+  );
 }
 
 main().catch((e) => {

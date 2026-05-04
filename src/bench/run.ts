@@ -1,8 +1,7 @@
-// End-to-end benchmark. Boots each server in a child process, runs autocannon
-// at increasing payload sizes, prints a side-by-side throughput/latency table.
+// End-to-end benchmark across all three engines. Boots each server in a child
+// process, runs autocannon at increasing payload sizes, prints a summary table.
 
 import { spawn, ChildProcess } from 'node:child_process';
-import { performance } from 'node:perf_hooks';
 import autocannon from 'autocannon';
 import { buildCartPayload } from '../shared/payload';
 
@@ -12,16 +11,11 @@ interface ServerSpec {
   scriptPath: string;
 }
 
-const CV_SERVER: ServerSpec = {
-  label: 'class-validator',
-  port: 3001,
-  scriptPath: 'src/classvalidator/main.ts',
-};
-const AK_SERVER: ServerSpec = {
-  label: 'arktype',
-  port: 3002,
-  scriptPath: 'src/arktype/main.ts',
-};
+const SERVERS: ServerSpec[] = [
+  { label: 'class-validator', port: 3001, scriptPath: 'src/classvalidator/main.ts' },
+  { label: 'zod v4',          port: 3003, scriptPath: 'src/zod/main.ts' },
+  { label: 'arktype',         port: 3002, scriptPath: 'src/arktype/main.ts' },
+];
 
 const QUERY = `mutation($input: CartSummaryInput!){ processCart(input:$input){ itemCount totalCents cartId } }`;
 
@@ -63,7 +57,19 @@ async function killServer(child: ChildProcess) {
   if (!child.killed) child.kill('SIGKILL');
 }
 
-async function runBench(spec: ServerSpec, body: string, label: string) {
+interface BenchResult {
+  label: string;
+  variant: string;
+  rps: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  avgLat: number;
+  bytesSec: number;
+  nonOk: number;
+}
+
+async function runBench(spec: ServerSpec, body: string, label: string): Promise<BenchResult> {
   const url = `http://127.0.0.1:${spec.port}/graphql`;
   const result: any = await new Promise((resolve, reject) => {
     const inst = autocannon(
@@ -107,12 +113,16 @@ async function main() {
   console.log(`node ${process.version}`);
   console.log();
 
-  const cv = await startServer(CV_SERVER);
-  const ak = await startServer(AK_SERVER);
-  console.log(`booted: ${CV_SERVER.label} @ ${CV_SERVER.port}, ${AK_SERVER.label} @ ${AK_SERVER.port}`);
+  const procs: Array<{ spec: ServerSpec; child: ChildProcess }> = [];
+  for (const spec of SERVERS) {
+    procs.push({ spec, child: await startServer(spec) });
+  }
+  console.log(
+    `booted: ${SERVERS.map((s) => `${s.label}@${s.port}`).join(', ')}`,
+  );
 
   try {
-    const rows: any[] = [];
+    const rows: BenchResult[] = [];
     for (const variant of VARIANTS) {
       const input = buildCartPayload({
         itemCount: variant.itemCount,
@@ -123,37 +133,42 @@ async function main() {
       const sizeKB = (Buffer.byteLength(body) / 1024).toFixed(1);
 
       console.log(`---- variant=${variant.label} items=${variant.itemCount} body≈${sizeKB} KB ----`);
-      await warmup(CV_SERVER, body);
-      const cvRes = await runBench(CV_SERVER, body, variant.label);
-      await warmup(AK_SERVER, body);
-      const akRes = await runBench(AK_SERVER, body, variant.label);
-
-      printRow(cvRes);
-      printRow(akRes);
-      console.log(
-        `  speedup: ${(akRes.rps / cvRes.rps).toFixed(2)}x rps  ${(cvRes.p99 / Math.max(akRes.p99, 1)).toFixed(2)}x lower p99`,
-      );
-      rows.push(cvRes, akRes);
+      const variantResults: BenchResult[] = [];
+      for (const { spec } of procs) {
+        await warmup(spec, body);
+        const r = await runBench(spec, body, variant.label);
+        printRow(r);
+        variantResults.push(r);
+      }
+      // Speedup vs class-validator baseline.
+      const baseline = variantResults.find((r) => r.label === 'class-validator');
+      if (baseline) {
+        for (const r of variantResults) {
+          if (r === baseline) continue;
+          const rpsRatio = (r.rps / baseline.rps).toFixed(2);
+          const p99Ratio = (baseline.p99 / Math.max(r.p99, 1)).toFixed(2);
+          console.log(`  ${r.label.padEnd(15)}: ${rpsRatio}x rps, ${p99Ratio}x lower p99 vs class-validator`);
+        }
+      }
+      rows.push(...variantResults);
       console.log();
     }
 
-    // Summary table
     console.log('=== summary ===');
-    console.log('variant      | server          | rps     | mean(ms) | p50  | p95  | p99   | non-2xx');
+    console.log('variant      | server          |   rps   | mean(ms) | p50  | p95  | p99   | non-2xx');
     for (const r of rows) {
       console.log(
         `${r.variant.padEnd(12)} | ${r.label.padEnd(15)} | ${String(Math.round(r.rps)).padStart(7)} | ${r.avgLat.toFixed(2).padStart(8)} | ${String(r.p50).padStart(4)} | ${String(r.p95).padStart(4)} | ${String(r.p99).padStart(5)} | ${r.nonOk}`,
       );
     }
   } finally {
-    await killServer(cv);
-    await killServer(ak);
+    for (const { child } of procs) await killServer(child);
   }
 }
 
-function printRow(r: any) {
+function printRow(r: BenchResult) {
   console.log(
-    `  ${r.label.padEnd(15)} rps=${String(Math.round(r.rps)).padStart(6)}  mean=${r.avgLat.toFixed(2).padStart(6)}ms  p50=${String(r.p50).padStart(4)}  p95=${String(r.p95).padStart(4)}  p99=${String(r.p99).padStart(5)}  non2xx=${r.nonOk}`,
+    `  ${r.label.padEnd(15)} rps=${String(Math.round(r.rps)).padStart(6)}  mean=${r.avgLat.toFixed(2).padStart(7)}ms  p50=${String(r.p50).padStart(4)}  p95=${String(r.p95).padStart(4)}  p99=${String(r.p99).padStart(5)}  non2xx=${r.nonOk}`,
   );
 }
 

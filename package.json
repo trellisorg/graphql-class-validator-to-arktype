@@ -6,6 +6,7 @@
   "scripts": {
     "start:cv": "ts-node -T src/classvalidator/main.ts",
     "start:ak": "ts-node -T src/arktype/main.ts",
+    "start:zod": "ts-node -T src/zod/main.ts",
     "bench": "ts-node -T src/bench/run.ts",
     "bench:micro": "ts-node -T src/bench/micro.ts"
   },
@@ -22,8 +23,10 @@
     "class-validator": "^0.14.3",
     "graphql": "^16.10.0",
     "graphql-tag": "^2.12.6",
+    "nestjs-zod": "^5.3.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "zod": "^4.4.2"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
