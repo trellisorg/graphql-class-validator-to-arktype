@@ -9,6 +9,9 @@ export { registerArkEnum, validateArkEnum, type RegisterArkEnumOptions } from '.
 // Type helpers (NestJS PartialType / PickType / OmitType / IntersectionType analogues)
 export { arkIntersection, arkOmit, arkPartial, arkPick, arkRequired } from './ark-type-helpers';
 
+// Field-override helpers (force properties to GraphQL ID for prefixed/non-uuid ids)
+export { arkId, arkIdArray, arkIdFields } from './ark-field-helpers';
+
 // Resolver-side decorators and pipe
 export { ArkArgs } from './ark-args.decorator';
 export { ArkMutation, ArkQuery, type ArkOperationOptions } from './ark-query.decorator';
