@@ -1,0 +1,61 @@
+import 'reflect-metadata';
+import { NestFactory } from '@nestjs/core';
+import { Module, ValidationPipe } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { ApolloServerPluginLandingPageDisabled } from '@apollo/server/plugin/disabled';
+import { CartResolver } from './resolver';
+import './filler-types';
+import { FILLER_CLASSES } from './filler-types';
+import { CartSummaryInput, CartSummaryResult, CartItemInput, SponsorInput, TagInput } from './dtos';
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: true,
+      introspection: false,
+      playground: false,
+      plugins: [ApolloServerPluginLandingPageDisabled()],
+      // Force the filler input types into the schema so their metadata is
+      // retained at validation time, mirroring Aurora's footprint.
+      buildSchemaOptions: {
+        orphanedTypes: [
+          ...FILLER_CLASSES,
+          TagInput,
+          SponsorInput,
+          CartItemInput,
+          CartSummaryInput,
+          CartSummaryResult,
+        ],
+      },
+    }),
+  ],
+  providers: [CartResolver],
+})
+class AppModule {}
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    logger: process.env.NEST_LOG === '1' ? ['error', 'warn', 'log'] : false,
+    bodyParser: false,
+  });
+  const express = (await import('express')).default;
+  app.use(express.json({ limit: '10mb' }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidUnknownValues: true,
+    }),
+  );
+  const port = Number(process.env.PORT ?? 3001);
+  await app.listen(port);
+  // eslint-disable-next-line no-console
+  console.log(`[class-validator] listening on http://localhost:${port}/graphql`);
+}
+
+bootstrap().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

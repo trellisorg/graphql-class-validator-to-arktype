@@ -1,0 +1,4 @@
+allowBuilds:
+  '@apollo/protobufjs': set this to true or false
+  '@nestjs/core': set this to true or false
+  esbuild: set this to true or false

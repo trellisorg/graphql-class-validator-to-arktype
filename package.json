@@ -1,0 +1,36 @@
+{
+  "name": "graphql-class-validator-to-arktype",
+  "version": "0.0.1",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start:cv": "ts-node -T src/classvalidator/main.ts",
+    "start:ak": "ts-node -T src/arktype/main.ts",
+    "bench": "ts-node -T src/bench/run.ts",
+    "bench:micro": "ts-node -T src/bench/micro.ts"
+  },
+  "dependencies": {
+    "@apollo/server": "^4.11.2",
+    "@as-integrations/express5": "^1.1.2",
+    "@nestjs/apollo": "^13.0.3",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/graphql": "^13.0.3",
+    "@nestjs/platform-express": "^11.0.1",
+    "arktype": "^2.1.20",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.3",
+    "graphql": "^16.10.0",
+    "graphql-tag": "^2.12.6",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "autocannon": "^8.0.0",
+    "ts-node": "^10.9.2",
+    "tslib": "^2.8.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
+  }
+}

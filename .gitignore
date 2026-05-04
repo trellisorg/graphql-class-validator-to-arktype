@@ -1,0 +1,7 @@
+event-loop-blocking-956707398
+node_modules
+dist
+.idea
+.DS_Store
+*.log
+/tmp
