@@ -3,61 +3,61 @@ import { z } from 'zod';
 import { createZodInputType } from './graphql-zod';
 
 // Zod v4 schemas — same shape and constraints as the ArkType path so the
-// validation work being measured is equivalent.
+// Validation work being measured is equivalent.
 export const TagSchema = z.object({
-  tagId: z.uuid(),
-  name: z.string().min(1).max(64),
+    name: z.string().min(1).max(64),
+    tagId: z.uuid(),
 });
 
 export const SponsorSchema = z.object({
-  sponsorId: z.uuid(),
-  weight: z.number().int().min(1).max(1_000_000),
-  label: z.string().min(1).max(128),
+    label: z.string().min(1).max(128),
+    sponsorId: z.uuid(),
+    weight: z.number().int().min(1).max(1_000_000),
 });
 
 export const CartItemSchema = z.object({
-  itemId: z.uuid(),
-  quantity: z.number().int().min(1).max(10_000),
-  unitPriceCents: z.number().int().min(0).max(10_000_000),
-  notes: z.string().max(1000),
-  tags: z.array(TagSchema).max(64),
-  sponsors: z.array(SponsorSchema).max(64),
+    itemId: z.uuid(),
+    notes: z.string().max(1000),
+    quantity: z.number().int().min(1).max(10_000),
+    sponsors: z.array(SponsorSchema).max(64),
+    tags: z.array(TagSchema).max(64),
+    unitPriceCents: z.number().int().min(0).max(10_000_000),
 });
 
 export const CartSummarySchema = z.object({
-  cartId: z.uuid(),
-  userId: z.uuid(),
-  currency: z.string().length(3),
-  channel: z.string().min(1),
-  items: z.array(CartItemSchema).min(1).max(500),
+    cartId: z.uuid(),
+    channel: z.string().min(1),
+    currency: z.string().length(3),
+    items: z.array(CartItemSchema).min(1).max(500),
+    userId: z.uuid(),
 });
 
 export const TagInput = createZodInputType(TagSchema, { name: 'TagInput' });
 export const SponsorInput = createZodInputType(SponsorSchema, { name: 'SponsorInput' });
 
 export const CartItemInput = createZodInputType(CartItemSchema, {
-  name: 'CartItemInput',
-  fields: {
-    tags: () => [TagInput],
-    sponsors: () => [SponsorInput],
-  },
+    fields: {
+        sponsors: () => [SponsorInput],
+        tags: () => [TagInput],
+    },
+    name: 'CartItemInput',
 });
 
 export const CartSummaryInput = createZodInputType(CartSummarySchema, {
-  name: 'CartSummaryInput',
-  fields: {
-    items: () => [CartItemInput],
-  },
+    fields: {
+        items: () => [CartItemInput],
+    },
+    name: 'CartSummaryInput',
 });
 
 @ObjectType()
 export class CartSummaryResult {
-  @Field(() => Int)
-  itemCount!: number;
+    @Field(() => Int)
+    itemCount!: number;
 
-  @Field(() => Int)
-  totalCents!: number;
+    @Field(() => Int)
+    totalCents!: number;
 
-  @Field()
-  cartId!: string;
+    @Field()
+    cartId!: string;
 }

@@ -1,97 +1,97 @@
 import { ArgsType } from '@nestjs/graphql';
 import {
-  arkOmit,
-  arkPartial,
-  arkPick,
-  createArkArgsType,
-  createArkInputType,
-  createArkObjectType,
-  registerArkEnum,
+    arkOmit,
+    arkPartial,
+    arkPick,
+    createArkArgsType,
+    createArkInputType,
+    createArkObjectType,
+    registerArkEnum,
 } from '../arktype/graphql-arktype';
 import {
-  AuthorSchema,
-  BookSchema,
-  CreateBookInputSchema,
-  ListBooksArgsSchema,
-  OrderSchema,
-  OrderStatusSchema,
-  PlaceOrderInputSchema,
+    AuthorSchema,
+    BookSchema,
+    CreateBookInputSchema,
+    ListBooksArgsSchema,
+    OrderSchema,
+    OrderStatusSchema,
+    PlaceOrderInputSchema,
 } from './schemas';
 
 // ---- Enums ----------------------------------------------------------------
 
 export const OrderStatus = registerArkEnum(OrderStatusSchema, {
-  name: 'OrderStatus',
-  description: 'Status of a customer order through fulfilment.',
-  valuesMap: {
-    PENDING: { description: 'Awaiting payment' },
-    PAID: { description: 'Payment captured, ready to ship' },
-    SHIPPED: { description: 'Handed off to the carrier' },
-    CANCELLED: { description: 'Cancelled by user or system' },
-  },
+    description: 'Status of a customer order through fulfilment.',
+    name: 'OrderStatus',
+    valuesMap: {
+        CANCELLED: { description: 'Cancelled by user or system' },
+        PAID: { description: 'Payment captured, ready to ship' },
+        PENDING: { description: 'Awaiting payment' },
+        SHIPPED: { description: 'Handed off to the carrier' },
+    },
 });
 
 // ---- Object (output) types -----------------------------------------------
 // Order matters: register children before parents so nested-type lookup works
-// without manual `fields:` overrides. Author has no nested objects, so it
-// resolves on its own. Book references Author via the registry.
+// Without manual `fields:` overrides. Author has no nested objects, so it
+// Resolves on its own. Book references Author via the registry.
 
 export const Author = createArkObjectType(AuthorSchema, {
-  name: 'Author',
-  description: 'A book author.',
+    description: 'A book author.',
+    name: 'Author',
 });
 
 export const Book = createArkObjectType(BookSchema, {
-  name: 'Book',
-  description: 'A book in the catalog.',
+    description: 'A book in the catalog.',
+    name: 'Book',
 });
 
 export const Order = createArkObjectType(OrderSchema, {
-  name: 'Order',
-  fields: {
-    status: () => OrderStatus.gqlEnumRef,
-  },
+    fields: {
+        status: () => OrderStatus.gqlEnumRef,
+    },
+    name: 'Order',
 });
 
 // ---- Input types ---------------------------------------------------------
 
 export const CreateBookInput = createArkInputType(CreateBookInputSchema, {
-  name: 'CreateBookInput',
-  description: 'Payload to create a new book.',
+    description: 'Payload to create a new book.',
+    name: 'CreateBookInput',
 });
 
 export const PlaceOrderInput = createArkInputType(PlaceOrderInputSchema, {
-  name: 'PlaceOrderInput',
-  fields: {
-    status: () => OrderStatus.gqlEnumRef,
-  },
+    fields: {
+        status: () => OrderStatus.gqlEnumRef,
+    },
+    name: 'PlaceOrderInput',
 });
 
 // ---- Type helpers --------------------------------------------------------
 // Demonstrates all four PartialType / PickType / OmitType analogues.
 
 export const UpdateBookInput = arkPartial(CreateBookInput, {
-  name: 'UpdateBookInput',
-  description: 'Patch payload — every field is optional.',
+    description: 'Patch payload — every field is optional.',
+    name: 'UpdateBookInput',
 });
 
 export const BookSummary = arkPick(Book, ['id', 'title'] as const, {
-  name: 'BookSummary',
-  description: 'Listing-page projection of Book.',
+    description: 'Listing-page projection of Book.',
+    name: 'BookSummary',
 });
 
 export const PublicAuthor = arkOmit(Author, ['id'] as const, {
-  name: 'PublicAuthor',
+    name: 'PublicAuthor',
 });
 
 // ---- Args types (resolver argument bundles) ------------------------------
 // Mirrors NestJS PartialType convention: when subclassing a generated class,
-// re-apply the type decorator so the subclass is registered.
+// Re-apply the type decorator so the subclass is registered.
 
 @ArgsType()
 export class ListBooksArgs extends createArkArgsType(ListBooksArgsSchema, {
-  name: 'ListBooksArgs',
-  fields: {
-    status: () => OrderStatus.gqlEnumRef,
-  },
+    fields: {
+        status: () => OrderStatus.gqlEnumRef,
+    },
+    name: 'ListBooksArgs',
 }) {}

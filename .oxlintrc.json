@@ -1,0 +1,21 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "plugins": ["typescript", "unicorn", "oxc"],
+    "categories": {
+        "correctness": "error",
+        "suspicious": "warn",
+        "perf": "warn",
+        "style": "off"
+    },
+    "rules": {
+        "no-await-in-loop": "off",
+        "no-magic-numbers": "off",
+        "no-empty-function": "off",
+        "unicorn/no-null": "off",
+        "unicorn/filename-case": "off",
+        "unicorn/no-array-for-each": "off",
+        "unicorn/no-array-callback-reference": "off",
+        "unicorn/no-array-reduce": "off"
+    },
+    "ignorePatterns": ["dist/", "node_modules/", "event-loop-blocking-*/"]
+}

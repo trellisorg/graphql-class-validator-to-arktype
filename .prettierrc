@@ -1,0 +1,19 @@
+{
+    "bracketSameLine": true,
+    "jsdocCapitalizeDescription": true,
+    "jsdocCommentLineStrategy": "multiline",
+    "jsdocDescriptionWithDot": true,
+    "jsdocPreferCodeFences": true,
+    "jsdocPrintWidth": 115,
+    "jsdocSeparateReturnsFromParam": true,
+    "jsdocSeparateTagGroups": true,
+    "plugins": [
+        "prettier-plugin-organize-attributes",
+        "prettier-plugin-organize-imports",
+        "prettier-plugin-jsdoc"
+    ],
+    "printWidth": 115,
+    "singleQuote": true,
+    "tabWidth": 4,
+    "trailingComma": "es5"
+}

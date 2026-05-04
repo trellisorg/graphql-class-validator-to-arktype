@@ -31,17 +31,18 @@ ANR/event-loop block on 2026-04-26).
 ## Results — direct in-process validation (`pnpm bench:micro`)
 
 500 iterations per variant, 50 warmup iterations. Time is per-validation in ms.
+Re-run on 2026-05-04, Node 24.12.0.
 
-| variant  | items | payload  | class-validator | zod v4 | **arktype** | zod vs cv | ark vs cv | ark vs zod |
-| -------- | ----: | -------: | --------------: | -----: | ----------: | --------: | --------: | ---------: |
-| tiny     |     1 |  0.3 KB  |        0.036 ms | 0.003 ms |  0.002 ms |  10.9×    |   23.4×   |   2.1×     |
-| small    |    10 |  3.5 KB  |        0.192 ms | 0.014 ms |  0.004 ms |  13.4×    |   44.8×   |   3.4×     |
-| medium   |    50 | 27.8 KB  |        1.549 ms | 0.098 ms |  0.026 ms |  15.7×    |   59.9×   |   3.8×     |
-| large    |   200 |  172 KB  |        9.377 ms | 0.591 ms |  0.136 ms |  15.9×    |   68.7×   |   4.3×     |
-| xlarge   |   500 |  498 KB  |       25.606 ms | 1.600 ms |  0.394 ms |  16.0×    |   65.1×   |   4.1×     |
+| variant | items | payload | class-validator |   zod v4 | **arktype** | zod vs cv | ark vs cv | ark vs zod |
+|---------|------:|--------:|----------------:|---------:|------------:|----------:|----------:|-----------:|
+| tiny    |     1 |  0.3 KB |        0.034 ms | 0.003 ms |    0.002 ms |     11.0× |     21.8× |       2.0× |
+| small   |    10 |  3.5 KB |        0.200 ms | 0.014 ms |    0.004 ms |     13.9× |     46.1× |       3.3× |
+| medium  |    50 | 27.8 KB |        1.344 ms | 0.098 ms |    0.024 ms |     13.7× |     56.1× |       4.1× |
+| large   |   200 |  172 KB |        8.762 ms | 0.591 ms |    0.133 ms |     14.8× |     66.0× |       4.5× |
+| xlarge  |   500 |  498 KB |       25.016 ms | 1.736 ms |    0.415 ms |     14.4× |     60.3× |       4.2× |
 
-p99 ratios on the 200-item payload: class-validator p99 = 21.4 ms,
-zod p99 = 0.95 ms (**22.6× lower**), ArkType p99 = 0.16 ms (**135× lower**).
+p99 ratios on the 200-item payload: class-validator p99 = 9.83 ms,
+zod p99 = 0.82 ms (**12.0× lower**), ArkType p99 = 0.15 ms (**64.6× lower**).
 
 ArkType results align with the moltar TS-runtime-type benchmarks cited in
 `analyses/01-validation-libraries-v2.md` (~100×). Zod v4 with its JIT
@@ -52,24 +53,26 @@ already use).
 ## Results — end-to-end HTTP (`pnpm bench`)
 
 `autocannon` driving a real `POST /graphql` mutation, 16 connections, 8 s per run.
+Re-run on 2026-05-04, Node 24.12.0.
 
-| variant  | items | body    | server          |    rps |    mean | p99    |
-| -------- | ----: | ------: | --------------- | -----: | ------: | -----: |
-| small    |    10 |  3.6 KB | class-validator |  3,358 |  4.4 ms |   9 ms |
-| small    |    10 |  3.6 KB | zod v4          |  7,569 |  1.4 ms |   4 ms |
-| small    |    10 |  3.6 KB | **arktype**     |  8,391 |  1.2 ms |   3 ms |
-| medium   |    50 | 27.9 KB | class-validator |    523 | 30.0 ms |  59 ms |
-| medium   |    50 | 27.9 KB | zod v4          |  1,731 |  8.8 ms |  18 ms |
-| medium   |    50 | 27.9 KB | **arktype**     |  1,996 |  7.6 ms |  15 ms |
-| large    |   200 |  172 KB | class-validator |     83 |  191 ms | 443 ms |
-| large    |   200 |  172 KB | zod v4          |    302 |  52 ms  | 115 ms |
-| large    |   200 |  172 KB | **arktype**     |    370 |  43 ms  |  85 ms |
+| variant | items |    body | server          |   rps |    mean |    p99 |
+|---------|------:|--------:|-----------------|------:|--------:|-------:|
+| small   |    10 |  3.6 KB | class-validator | 2,961 |  4.9 ms |  11 ms |
+| small   |    10 |  3.6 KB | zod v4          | 6,669 |  1.8 ms |   7 ms |
+| small   |    10 |  3.6 KB | **arktype**     | 8,042 |  1.3 ms |   4 ms |
+| medium  |    50 | 27.9 KB | class-validator |   503 | 31.3 ms |  62 ms |
+| medium  |    50 | 27.9 KB | zod v4          | 1,567 |  9.7 ms |  24 ms |
+| medium  |    50 | 27.9 KB | **arktype**     | 1,961 |  7.7 ms |  16 ms |
+| large   |   200 |  172 KB | class-validator |    79 |  199 ms | 400 ms |
+| large   |   200 |  172 KB | zod v4          |   279 |   57 ms | 114 ms |
+| large   |   200 |  172 KB | **arktype**     |   342 |   46 ms |  92 ms |
 
 End-to-end speedups vs class-validator at 200 items:
-- **Zod v4:** 3.7× more rps, 3.9× lower p99
-- **ArkType:** 4.5× more rps, 5.2× lower p99
 
-The 443 ms p99 on the class-validator side at 200 items is the operationally
+- **Zod v4:** 3.5× more rps, 3.5× lower p99
+- **ArkType:** 4.3× more rps, 4.4× lower p99
+
+The 400 ms p99 on the class-validator side at 200 items is the operationally
 important number: it's well past the 1 s ANR threshold under load (queue
 depth + concurrent requests), and matches the per-request floor that
 contributed to the loop-block window in the findings. Both Zod and ArkType
@@ -77,14 +80,14 @@ keep p99 comfortably under 200 ms at the same load.
 
 ## Tradeoffs at a glance
 
-| dimension                                   | class-validator | zod v4         | arktype       |
-| ------------------------------------------- | --------------- | -------------- | ------------- |
-| validation cost (200-item p99)              | 21 ms           | 0.95 ms        | **0.16 ms**   |
-| end-to-end HTTP rps (200 items)             | 83              | 302            | **370**       |
-| schema definition style                     | TS class + decorators | TS expression | TS expression / DSL |
-| GraphQL code-first integration              | first-class     | needs prototype lib | needs prototype lib |
-| migration cost from class-validator         | n/a             | medium (familiar API) | larger (new DSL) |
-| ecosystem familiarity                       | high            | very high      | newer         |
+| dimension                           | class-validator       | zod v4                | arktype             |
+|-------------------------------------|-----------------------|-----------------------|---------------------|
+| validation cost (200-item p99)      | 9.8 ms                | 0.82 ms               | **0.15 ms**         |
+| end-to-end HTTP rps (200 items)     | 79                    | 279                   | **342**             |
+| schema definition style             | TS class + decorators | TS expression         | TS expression / DSL |
+| GraphQL code-first integration      | first-class           | needs prototype lib   | needs prototype lib |
+| migration cost from class-validator | n/a                   | medium (familiar API) | larger (new DSL)    |
+| ecosystem familiarity               | high                  | very high             | newer               |
 
 ## Results — full-surface demo path (`pnpm bench:demo`)
 
@@ -94,17 +97,19 @@ which mirror the same full-feature surface: `@InputType` + `@ObjectType` +
 `@ArgsType` + enum + `PartialType` / `PickType` / `OmitType`. 16
 connections, 6 s per run, on small everyday-shape payloads.
 
-| case                              | server          |   rps  | mean(ms) | p99   |
-| --------------------------------- | --------------- | -----: | -------: | ----: |
-| createBook (single object)        | class-validator | 14,887 |  0.34 ms |  2 ms |
-| createBook                        | zod v4          | 13,846 |  0.44 ms |  5 ms |
-| createBook                        | **arktype**     | 15,997 |  0.24 ms |  2 ms |
-| placeOrder (5-item array + enum)  | class-validator | 13,640 |  0.52 ms |  3 ms |
-| placeOrder                        | zod v4          | 15,348 |  0.29 ms |  2 ms |
-| placeOrder                        | arktype         | 14,507 |  0.36 ms |  4 ms |
-| placeOrder (50-item array)        | class-validator | 12,175 |  1.08 ms |  2 ms |
-| placeOrder                        | zod v4          | 10,280 |  1.24 ms |  5 ms |
-| placeOrder                        | arktype         | 11,669 |  1.12 ms |  4 ms |
+Re-run on 2026-05-04, Node 24.12.0, 6 s per case.
+
+| case                             | server          |    rps | mean(ms) |  p99 |
+|----------------------------------|-----------------|-------:|---------:|-----:|
+| createBook (single object)       | class-validator | 13,147 |  0.59 ms | 4 ms |
+| createBook                       | zod v4          | 13,252 |  0.48 ms | 5 ms |
+| createBook                       | **arktype**     | 16,695 |  0.18 ms | 1 ms |
+| placeOrder (5-item array + enum) | class-validator | 14,917 |  0.44 ms | 2 ms |
+| placeOrder                       | zod v4          | 15,811 |  0.27 ms | 2 ms |
+| placeOrder                       | **arktype**     | 17,840 |  0.12 ms | 1 ms |
+| placeOrder (50-item array)       | class-validator | 13,024 |  1.08 ms | 2 ms |
+| placeOrder                       | zod v4          | 12,575 |  1.08 ms | 2 ms |
+| placeOrder                       | **arktype**     | 13,625 |  0.86 ms | 2 ms |
 
 The takeaway: on small everyday shapes (≤ 50 simple fields, no deep
 nesting, modest schema footprint) all three engines run within 15-20% of
@@ -210,21 +215,21 @@ src/
 `@nestjs/graphql` integration. Surface area, mapped to the NestJS GraphQL
 constructs it replaces:
 
-| `@nestjs/graphql`            | `graphql-arktype`                                      |
-| ---------------------------- | ------------------------------------------------------ |
-| `@InputType()` + `@Field()`  | `createArkInputType(schema, { name, fields? })`        |
-| `@ObjectType()` + `@Field()` | `createArkObjectType(schema, { name, fields? })`       |
-| `@ArgsType()`                | `createArkArgsType(schema, { name?, fields? })`        |
-| `registerEnumType(...)`      | `registerArkEnum(schema, { name, valuesMap? })`        |
-| `PartialType`                | `arkPartial(parent, options)`                          |
-| `PickType`                   | `arkPick(parent, ['key', ...] as const, options)`      |
-| `OmitType`                   | `arkOmit(parent, ['key', ...] as const, options)`      |
-| `Required` (no NestJS equiv) | `arkRequired(parent, options)`                         |
-| `IntersectionType`           | `arkIntersection(a, b, options)`                       |
-| `@Args('input', {type})`     | `@ArkArgs('input', InputClass)` (patches paramtypes)   |
-| `@Query(returnType)`         | `@ArkQuery(returnSchema, { validate? })`               |
-| `@Mutation(returnType)`      | `@ArkMutation(returnSchema, { validate? })`            |
-| global `ValidationPipe`      | global `ArkValidationPipe`                             |
+| `@nestjs/graphql`            | `graphql-arktype`                                    |
+|------------------------------|------------------------------------------------------|
+| `@InputType()` + `@Field()`  | `createArkInputType(schema, { name, fields? })`      |
+| `@ObjectType()` + `@Field()` | `createArkObjectType(schema, { name, fields? })`     |
+| `@ArgsType()`                | `createArkArgsType(schema, { name?, fields? })`      |
+| `registerEnumType(...)`      | `registerArkEnum(schema, { name, valuesMap? })`      |
+| `PartialType`                | `arkPartial(parent, options)`                        |
+| `PickType`                   | `arkPick(parent, ['key', ...] as const, options)`    |
+| `OmitType`                   | `arkOmit(parent, ['key', ...] as const, options)`    |
+| `Required` (no NestJS equiv) | `arkRequired(parent, options)`                       |
+| `IntersectionType`           | `arkIntersection(a, b, options)`                     |
+| `@Args('input', {type})`     | `@ArkArgs('input', InputClass)` (patches paramtypes) |
+| `@Query(returnType)`         | `@ArkQuery(returnSchema, { validate? })`             |
+| `@Mutation(returnType)`      | `@ArkMutation(returnSchema, { validate? })`          |
+| global `ValidationPipe`      | global `ArkValidationPipe`                           |
 
 Highlights of the prototype:
 
@@ -238,7 +243,7 @@ Highlights of the prototype:
   arrays (recursive), nullable from JSON Schema `required`, optional via
   `anyOf [..., {type:"null"}]`, `format: "uuid"` → `ID`, `format: "date-time"`
   → `GraphQLISODateTime`. Configurable via `resolveOptions: { idFormats?,
-  isoDateTime? }`.
+isoDateTime? }`.
 - **Type helpers operate on the schema, not the class.** `arkPartial`,
   `arkPick`, `arkOmit`, `arkRequired`, `arkIntersection` all delegate to
   ArkType's native `.partial()` / `.pick()` / `.omit()` / `.required()` /
@@ -271,16 +276,16 @@ are the schema engine (`z.toJSONSchema(schema)` instead of
 `schema.toJsonSchema()`) and the validation primitive (`schema.safeParse`
 instead of `schema(value)` + `ArkErrors`):
 
-| `@nestjs/graphql`            | `graphql-zod`                                          |
-| ---------------------------- | ------------------------------------------------------ |
-| `@InputType()` + `@Field()`  | `createZodInputType(schema, { name, fields? })`        |
-| `@ObjectType()` + `@Field()` | `createZodObjectType(schema, { name, fields? })`       |
-| `@ArgsType()`                | `createZodArgsType(schema, { name?, fields? })`        |
-| `registerEnumType(...)`      | `registerZodEnum(schema, { name, valuesMap? })`        |
+| `@nestjs/graphql`                                            | `graphql-zod`                                                            |
+|--------------------------------------------------------------|--------------------------------------------------------------------------|
+| `@InputType()` + `@Field()`                                  | `createZodInputType(schema, { name, fields? })`                          |
+| `@ObjectType()` + `@Field()`                                 | `createZodObjectType(schema, { name, fields? })`                         |
+| `@ArgsType()`                                                | `createZodArgsType(schema, { name?, fields? })`                          |
+| `registerEnumType(...)`                                      | `registerZodEnum(schema, { name, valuesMap? })`                          |
 | `PartialType` / `PickType` / `OmitType` / `IntersectionType` | `zodPartial` / `zodPick` / `zodOmit` / `zodRequired` / `zodIntersection` |
-| `@Args('input', {type})`     | `@ZodArgs('input', InputClass)`                        |
-| `@Query` / `@Mutation`       | `@ZodQuery(schema)` / `@ZodMutation(schema, { validate? })` |
-| `ValidationPipe`             | `ZodValidationPipe`                                    |
+| `@Args('input', {type})`                                     | `@ZodArgs('input', InputClass)`                                          |
+| `@Query` / `@Mutation`                                       | `@ZodQuery(schema)` / `@ZodMutation(schema, { validate? })`              |
+| `ValidationPipe`                                             | `ZodValidationPipe`                                                      |
 
 `src/zod-demo/` exercises every helper end-to-end and mirrors
 `src/arktype-demo/` line-for-line so the cross-engine comparison is
